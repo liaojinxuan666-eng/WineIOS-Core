@@ -16,7 +16,7 @@
     UILabel *title = [[UILabel alloc] init];
     title.translatesAutoresizingMaskIntoConstraints = NO;
     title.font = [UIFont preferredFontForTextStyle:UIFontTextStyleHeadline];
-    title.text = @"Wine-iOS Core 0.0.1 (1)";
+    title.text = @"Wine-iOS Core 0.0.1 (2)";
 
     self.textView = [[UITextView alloc] init];
     self.textView.translatesAutoresizingMaskIntoConstraints = NO;
@@ -65,7 +65,7 @@
     ]];
 
     [[WIOSLog shared] resetForNewSession];
-    [[WIOSLog shared] appendLevel:@"INFO" key:@"VERSION" value:@"0.0.1 (1)"];
+    [[WIOSLog shared] appendLevel:@"INFO" key:@"VERSION" value:@"0.0.1 (2)"];
     [[WIOSLog shared] appendLevel:@"INFO" key:@"WINE_BASELINE"
                            value:@"wine-11.0@db11d0fe6a169c457e23d007e20404643d067aa8"];
     [[WIOSLog shared] appendLevel:@"INFO" key:@"WINE_RUNTIME" value:@"NOT_BUNDLED (expected in 0.0.1)"];
@@ -111,4 +111,3 @@
 }
 
 @end
-

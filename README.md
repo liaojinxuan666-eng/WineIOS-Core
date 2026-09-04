@@ -7,6 +7,7 @@
 - 在真机上记录线程、TLS、文件和虚拟内存能力；
 - 以用户主动操作的方式测试 JIT 可执行内存；
 - 定义 Wine 与后续闭源运行时之间稳定的 C ABI。
+- 建立同版本 macOS Wine tools → iOS ARM64 configure 的两阶段探针。
 
 `0.0.1` **不声称**已经初始化 Wine，不包含 x64 JIT/AOT、DX11、Metal 图形后端、Steam/Epic、DRM、VAC 或启动器。
 
@@ -33,6 +34,8 @@ WineIOS-0.0.1/
 ├── runtime/
 │   ├── include/             稳定 C ABI（公开边界）
 │   └── src/                 当前仅 ABI 占位实现
+├── patches/wine/            可审计、顺序化的 Wine LGPL 补丁
+├── reports/                 每轮构建探针的事实记录
 ├── scripts/                 拉取、构建、打包与验证脚本
 └── tests/                   本地/CI 静态验收
 ```
@@ -46,8 +49,8 @@ WineIOS-0.0.1/
 本地 macOS 也可以运行：
 
 ```sh
-./scripts/build-host.sh
-./scripts/package-ipa.sh
+bash scripts/build-host.sh
+bash scripts/package-ipa.sh
 ```
 
 ## 下一道门
@@ -61,4 +64,3 @@ WineIOS-0.0.1/
 5. 解决 Wine server 在 iOS 进程模型下的启动方式；
 6. 只构建 PE 加载闭包、`ntdll`、`kernelbase`、`kernel32` 和必要依赖；
 7. 让宿主调用 `wios_runtime_get_api()` 并完成 Wine 核心初始化。
-
