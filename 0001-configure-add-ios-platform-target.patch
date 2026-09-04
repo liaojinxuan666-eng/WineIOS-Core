@@ -402,3 +402,27 @@ index 258a959..b792045 100644
      send_server_task_port();
  #endif
  
+diff --git a/dlls/ntdll/unix/system.c b/dlls/ntdll/unix/system.c
+index 350bcea..0b11324 100644
+--- a/dlls/ntdll/unix/system.c
++++ b/dlls/ntdll/unix/system.c
+@@ -60,8 +60,10 @@
+ #ifdef __APPLE__
+ # include <CoreFoundation/CoreFoundation.h>
+ # include <IOKit/IOKitLib.h>
++# ifndef WINE_IOS
+ # include <IOKit/ps/IOPSKeys.h>
+ # include <IOKit/ps/IOPowerSources.h>
++# endif
+ # include <mach/mach.h>
+ # include <mach/machine.h>
+ # include <mach/mach_init.h>
+@@ -4243,7 +4245,7 @@ static NTSTATUS fill_battery_state( SYSTEM_BATTERY_STATE *bs )
+     return STATUS_SUCCESS;
+ }
+ 
+-#elif defined(__APPLE__)
++#elif defined(__APPLE__) && !defined(WINE_IOS)
+ 
+ static NTSTATUS fill_battery_state( SYSTEM_BATTERY_STATE *bs )
+ {
