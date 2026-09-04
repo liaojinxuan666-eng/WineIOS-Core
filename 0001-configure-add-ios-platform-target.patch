@@ -374,28 +374,26 @@ index cb700dd..46ce5ec 100644
  #endif
      start_main_thread();
 diff --git a/dlls/ntdll/unix/server.c b/dlls/ntdll/unix/server.c
-index 258a959..fa2e84a 100644
+index 258a959..b792045 100644
 --- a/dlls/ntdll/unix/server.c
 +++ b/dlls/ntdll/unix/server.c
-@@ -1469,7 +1469,7 @@ static int server_connect(void)
- }
- 
- 
--#ifdef __APPLE__
-+#if defined(__APPLE__) && !defined(WINE_IOS)
+@@ -1472,6 +1472,7 @@ static int server_connect(void)
+ #ifdef __APPLE__
  #include <mach/mach.h>
  #include <mach/mach_error.h>
++#ifndef WINE_IOS
  #include <servers/bootstrap.h>
-@@ -1516,7 +1516,7 @@ static void send_server_task_port(void)
+ 
+ /* send our task port to the server */
+@@ -1516,6 +1517,7 @@ static void send_server_task_port(void)
  
      mach_port_deallocate(mach_task_self(), wineserver_port);
  }
--#endif  /* __APPLE__ */
-+#endif  /* __APPLE__ && !WINE_IOS */
++#endif  /* !WINE_IOS */
+ #endif  /* __APPLE__ */
  
  
- /***********************************************************************
-@@ -1740,7 +1740,7 @@ void server_init_process_done(void)
+@@ -1740,7 +1742,7 @@ void server_init_process_done(void)
          chdir( "/" );
      close( initial_cwd );
  
