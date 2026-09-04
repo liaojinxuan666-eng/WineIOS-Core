@@ -1,0 +1,28 @@
+name: Wine iOS core configure probe
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+jobs:
+  configure-ios-arm64:
+    runs-on: macos-15
+    timeout-minutes: 90
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build tools
+        run: brew install bison flex llvm
+
+      - name: Run Wine iOS core probe
+        run: bash scripts/run-wine-ios-probe.sh
+
+      - name: Upload build logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: wine-ios-configure-probe
+          path: build/logs/
+          if-no-files-found: warn
