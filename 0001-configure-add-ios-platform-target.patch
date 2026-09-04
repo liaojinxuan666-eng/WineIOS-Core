@@ -98,3 +98,256 @@ index 8b1d33f..fb2ff2f 100644
  /* Define if xattr functions take additional arguments (macOS) */
  #undef XATTR_ADDITIONAL_OPTIONS
  
+diff --git a/dlls/ntdll/unix/cdrom.c b/dlls/ntdll/unix/cdrom.c
+index 0836508..0139d8e 100644
+--- a/dlls/ntdll/unix/cdrom.c
++++ b/dlls/ntdll/unix/cdrom.c
+@@ -27,6 +27,10 @@
+ 
+ #include "config.h"
+ 
++#if defined(__APPLE__) && !defined(WINE_IOS)
++#define WINE_MACOS_DESKTOP
++#endif
++
+ #include <errno.h>
+ #include <string.h>
+ #include <stdarg.h>
+@@ -75,7 +79,7 @@
+ # include <sys/scsiio.h>
+ #endif
+ 
+-#ifdef __APPLE__
++#ifdef WINE_MACOS_DESKTOP
+ # include <libkern/OSByteOrder.h>
+ # include <sys/disk.h>
+ # include <IOKit/IOKitLib.h>
+@@ -341,7 +345,7 @@ static int CDROM_MediaChanged(int dev)
+  * This is ugly and inefficient, but we have no choice since the partition fd doesn't
+  * support the eject ioctl.
+  */
+-#ifdef __APPLE__
++#ifdef WINE_MACOS_DESKTOP
+ static NTSTATUS get_parent_device( int fd, char *name, size_t len )
+ {
+     NTSTATUS status = STATUS_NO_SUCH_FILE;
+@@ -521,7 +525,7 @@ static NTSTATUS CDROM_SyncCache(int dev, int fd)
+     cdrom_cache[dev].toc_good = 1;
+     return STATUS_SUCCESS;
+ 
+-#elif defined(__APPLE__)
++#elif defined(WINE_MACOS_DESKTOP)
+     int i;
+     dk_cd_read_toc_t hdr;
+     CDROM_TOC *toc = &cdrom_cache[dev].toc;
+@@ -633,7 +637,7 @@ static BOOL CDROM_GetInterfaceInfo(int fd, UCHAR* iface, UCHAR* port, UCHAR* dev
+         }
+     }
+     return FALSE;
+-#elif defined(__APPLE__)
++#elif defined(WINE_MACOS_DESKTOP)
+     dk_scsi_identify_t addr;
+     if (ioctl(fd, DKIOCSCSIIDENTIFY, &addr) != -1)
+     {
+@@ -707,7 +711,7 @@ static NTSTATUS CDROM_GetStatusCode(int io)
+  */
+ static NTSTATUS CDROM_GetControl(int dev, int fd, CDROM_AUDIO_CONTROL* cac)
+ {
+-#ifdef __APPLE__
++#ifdef WINE_MACOS_DESKTOP
+     uint16_t speed;
+     int io = ioctl( fd, DKIOCCDGETSPEED, &speed );
+     if (io != 0) return CDROM_GetStatusCode( io );
+@@ -824,7 +828,7 @@ static NTSTATUS CDROM_SetTray(int fd, BOOL doEject)
+     return CDROM_GetStatusCode((ioctl(fd, CDIOCALLOW, NULL)) ||
+                                (ioctl(fd, doEject ? CDIOCEJECT : CDIOCCLOSE, NULL)) ||
+                                (ioctl(fd, CDIOCPREVENT, NULL)));
+-#elif defined(__APPLE__)
++#elif defined(WINE_MACOS_DESKTOP)
+     if (doEject) return CDROM_GetStatusCode( ioctl( fd, DKIOCEJECT, NULL ) );
+     else return STATUS_NOT_SUPPORTED;
+ #else
+@@ -1097,7 +1101,7 @@ static NTSTATUS CDROM_ReadQChannel(int dev, int fd, const CDROM_SUB_Q_DATA_FORMA
+ 
+  end:
+     ret = CDROM_GetStatusCode(io);
+-#elif defined(__APPLE__)
++#elif defined(WINE_MACOS_DESKTOP)
+     SUB_Q_HEADER* hdr = (SUB_Q_HEADER*)data;
+     int io = 0;
+     union
+@@ -1161,7 +1165,7 @@ static NTSTATUS CDROM_Verify(int dev, int fd)
+         return STATUS_SUCCESS;
+     else
+         return STATUS_NO_MEDIA_IN_DEVICE;
+-#elif defined(__APPLE__)
++#elif defined(WINE_MACOS_DESKTOP)
+ 	/* At this point, we know that we have media, because in Mac OS X, the
+ 	 * device file is only created when media is present. */
+ 	return STATUS_SUCCESS;
+@@ -1481,7 +1485,7 @@ static NTSTATUS CDROM_RawRead(int fd, const RAW_READ_INFO* raw, void* buffer, DW
+ {
+     int         ret = STATUS_NOT_SUPPORTED;
+     int         io = -1;
+-#ifdef __APPLE__
++#ifdef WINE_MACOS_DESKTOP
+     dk_cd_read_t cdrd;
+ #endif
+ 
+@@ -1552,7 +1556,7 @@ static NTSTATUS CDROM_RawRead(int fd, const RAW_READ_INFO* raw, void* buffer, DW
+         FIXME("NIY: %d\n", raw->TrackMode);
+         return STATUS_INVALID_PARAMETER;
+     }
+-#elif defined(__APPLE__)
++#elif defined(WINE_MACOS_DESKTOP)
+     /* Mac OS lets us read multiple parts of the sector at a time.
+      * We can read all the sectors in at once, unlike Linux.
+      */
+@@ -1621,7 +1625,7 @@ static NTSTATUS CDROM_ScsiPassThroughDirect(int fd, const SCSI_PASS_THROUGH_DIRE
+ #ifdef HAVE_SG_IO_HDR_T_INTERFACE_ID
+     sg_io_hdr_t cmd;
+     int io;
+-#elif defined __APPLE__
++#elif defined WINE_MACOS_DESKTOP
+     dk_scsi_command_t cmd;
+     int io;
+ #endif
+@@ -1675,7 +1679,7 @@ static NTSTATUS CDROM_ScsiPassThroughDirect(int fd, const SCSI_PASS_THROUGH_DIRE
+ 
+     ret = CDROM_GetStatusCode(io);
+ 
+-#elif defined(__APPLE__)
++#elif defined(WINE_MACOS_DESKTOP)
+ 
+     memset(&cmd, 0, sizeof(cmd));
+     memcpy(cmd.cdb, in_pkt->Cdb, in_pkt->CdbLength);
+@@ -1823,7 +1827,7 @@ static NTSTATUS CDROM_ScsiPassThrough(int fd, const SCSI_PASS_THROUGH *in_pkt, S
+ #ifdef HAVE_SG_IO_HDR_T_INTERFACE_ID
+     sg_io_hdr_t cmd;
+     int io;
+-#elif defined __APPLE__
++#elif defined WINE_MACOS_DESKTOP
+     dk_scsi_command_t cmd;
+     int io;
+ #endif
+@@ -1880,7 +1884,7 @@ static NTSTATUS CDROM_ScsiPassThrough(int fd, const SCSI_PASS_THROUGH *in_pkt, S
+ 
+     ret = CDROM_GetStatusCode(io);
+ 
+-#elif defined(__APPLE__)
++#elif defined(WINE_MACOS_DESKTOP)
+ 
+     memset(&cmd, 0, sizeof(cmd));
+     memcpy(cmd.cdb, in_pkt->Cdb, in_pkt->CdbLength);
+@@ -2060,7 +2064,7 @@ static NTSTATUS CDROM_ScsiGetCaps(int fd, PIO_SCSI_CAPABILITIES caps)
+     caps->AdapterScansDown = FALSE; /* FIXME ? */
+     caps->AdapterUsesPio = FALSE; /* FIXME ? */
+     ret = STATUS_SUCCESS;
+-#elif defined __APPLE__
++#elif defined WINE_MACOS_DESKTOP
+     uint64_t bytesr, bytesw, align;
+     int io = ioctl(fd, DKIOCGETMAXBYTECOUNTREAD, &bytesr);
+     if (io != 0) return CDROM_GetStatusCode(io);
+@@ -2122,7 +2126,7 @@ static NTSTATUS DVD_StartSession(int fd, const DVD_SESSION_ID *sid_in, PDVD_SESS
+     ret =CDROM_GetStatusCode(ioctl(fd, DVD_AUTH, &auth_info));
+     *sid_out = auth_info.lsa.agid;
+     return ret;
+-#elif defined(__APPLE__)
++#elif defined(WINE_MACOS_DESKTOP)
+     NTSTATUS ret = STATUS_NOT_SUPPORTED;
+     dk_dvd_report_key_t dvdrk;
+     DVDAuthenticationGrantIDInfo agid_info;
+@@ -2158,7 +2162,7 @@ static NTSTATUS DVD_EndSession(int fd, const DVD_SESSION_ID *sid)
+ 
+     TRACE("\n");
+     return CDROM_GetStatusCode(ioctl(fd, DVD_AUTH, &auth_info));
+-#elif defined(__APPLE__)
++#elif defined(WINE_MACOS_DESKTOP)
+     dk_dvd_send_key_t dvdsk;
+ 
+     dvdsk.format = kDVDKeyFormatAGID_Invalidate;
+@@ -2207,7 +2211,7 @@ static NTSTATUS DVD_SendKey(int fd, const DVD_COPY_PROTECT_KEY *key)
+ 	FIXME("Unknown Keytype 0x%x\n",key->KeyType);
+     }
+     return ret;
+-#elif defined(__APPLE__)
++#elif defined(WINE_MACOS_DESKTOP)
+     dk_dvd_send_key_t dvdsk;
+     union
+     {
+@@ -2342,7 +2346,7 @@ static NTSTATUS DVD_ReadKey(int fd, PDVD_COPY_PROTECT_KEY key)
+ 	FIXME("Unknown keytype 0x%x\n",key->KeyType);
+     }
+     return ret;
+-#elif defined(__APPLE__)
++#elif defined(WINE_MACOS_DESKTOP)
+     union
+     {
+         dk_dvd_report_key_t key;
+@@ -2529,7 +2533,7 @@ static NTSTATUS DVD_GetRegion(int fd, PDVD_REGION region)
+         }
+     }
+     return ret;
+-#elif defined(__APPLE__)
++#elif defined(WINE_MACOS_DESKTOP)
+     dk_dvd_report_key_t key;
+     dk_dvd_read_structure_t dvd;
+     DVDRegionPlaybackControlInfo rpc;
+@@ -2709,7 +2713,7 @@ static NTSTATUS DVD_ReadStructure(int dev, const DVD_READ_STRUCTURE *structure,
+     case DvdMaxDescriptor: /* Suppress warning */
+ 	break;
+     }
+-#elif defined(__APPLE__)
++#elif defined(WINE_MACOS_DESKTOP)
+     NTSTATUS ret;
+     dk_dvd_read_structure_t dvdrs;
+     union
+@@ -2916,7 +2920,7 @@ NTSTATUS cdrom_DeviceIoControl( HANDLE device, HANDLE event, PIO_APC_ROUTINE apc
+         return status;
+     }
+ 
+-#ifdef __APPLE__
++#ifdef WINE_MACOS_DESKTOP
+     {
+         char name[100];
+ 
+diff --git a/dlls/ntdll/unix/file.c b/dlls/ntdll/unix/file.c
+index 42c8253..acfdb8e 100644
+--- a/dlls/ntdll/unix/file.c
++++ b/dlls/ntdll/unix/file.c
+@@ -2570,7 +2570,7 @@ done:
+ #endif /* VFAT_IOCTL_READDIR_BOTH */
+ 
+ 
+-#ifdef HAVE_GETATTRLIST
++#if defined(HAVE_GETATTRLIST) && !defined(WINE_IOS)
+ /***********************************************************************
+  *           read_directory_getattrlist
+  *
+@@ -2611,7 +2611,7 @@ static NTSTATUS read_directory_data_getattrlist( struct dir_data *data, const ch
+ 
+     return STATUS_SUCCESS;
+ }
+-#endif  /* HAVE_GETATTRLIST */
++#endif  /* HAVE_GETATTRLIST && !WINE_IOS */
+ 
+ 
+ /***********************************************************************
+@@ -2686,7 +2686,7 @@ static NTSTATUS read_directory_data( struct dir_data *data, int fd, const UNICOD
+         if (ret > 0)
+         {
+             unix_name[ret] = 0;
+-#ifdef HAVE_GETATTRLIST
++#if defined(HAVE_GETATTRLIST) && !defined(WINE_IOS)
+             if (!(status = read_directory_data_getattrlist( data, unix_name ))) return status;
+ #endif
+             if (!(status = read_directory_data_stat( data, unix_name ))) return status;
+@@ -7178,7 +7178,7 @@ NTSTATUS get_device_info( int fd, FILE_FS_DEVICE_INFORMATION *info )
+             info->DeviceType = FILE_DEVICE_TAPE;
+             break;
+         }
+-#elif defined(__FreeBSD__) || defined(__FreeBSD_kernel__) || defined(__APPLE__)
++#elif defined(__FreeBSD__) || defined(__FreeBSD_kernel__) || (defined(__APPLE__) && !defined(WINE_IOS))
+         {
+             int d_type;
+             if (ioctl(fd, FIODTYPE, &d_type) == 0)
