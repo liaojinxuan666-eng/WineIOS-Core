@@ -426,3 +426,35 @@ index 350bcea..0b11324 100644
  
  static NTSTATUS fill_battery_state( SYSTEM_BATTERY_STATE *bs )
  {
+diff --git a/dlls/ntdll/unix/virtual.c b/dlls/ntdll/unix/virtual.c
+index 111849d..ffbdc9f 100644
+--- a/dlls/ntdll/unix/virtual.c
++++ b/dlls/ntdll/unix/virtual.c
+@@ -66,7 +66,9 @@
+ #if defined(__APPLE__)
+ #define host_page_size mac_host_page_size
+ # include <mach/mach_init.h>
++# ifndef WINE_IOS
+ # include <mach/mach_vm.h>
++# endif
+ # include <mach/task.h>
+ # include <mach/thread_state.h>
+ # include <mach/vm_map.h>
+@@ -598,7 +600,7 @@ static void *anon_mmap_tryfixed( void *start, size_t size, int prot, int flags )
+ #elif defined(__FreeBSD__) || defined(__FreeBSD_kernel__)
+     ptr = mmap( start, size, prot, MAP_FIXED | MAP_EXCL | MAP_PRIVATE | MAP_ANON | flags, -1, 0 );
+     if (ptr == MAP_FAILED && errno == EINVAL) errno = EEXIST;
+-#elif defined(__APPLE__)
++#elif defined(__APPLE__) && !defined(WINE_IOS)
+     mach_vm_address_t result = (mach_vm_address_t)start;
+     kern_return_t ret = mach_vm_map( mach_task_self(), &result, size, 0, VM_FLAGS_FIXED,
+                                      MEMORY_OBJECT_NULL, 0, 0, prot, VM_PROT_ALL, VM_INHERIT_COPY );
+@@ -628,7 +630,7 @@ static void *anon_mmap_tryfixed( void *start, size_t size, int prot, int flags )
+ 
+ static void reserve_area( void *addr, void *end )
+ {
+-#ifdef __APPLE__
++#if defined(__APPLE__) && !defined(WINE_IOS)
+ 
+ #ifdef __i386__
+     static const mach_vm_address_t max_address = VM_MAX_ADDRESS;
