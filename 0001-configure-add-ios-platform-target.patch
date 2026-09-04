@@ -1,0 +1,100 @@
+diff --git a/configure b/configure
+index df4c4a9..bc44a12 100755
+--- a/configure
++++ b/configure
+@@ -6411,7 +6411,7 @@ fi
+ 
+ 
+ case $host in
+-  *-darwin*)
++  *-darwin*|*-ios*)
+     with_fontconfig=${with_fontconfig:-no}
+     ;;
+   *-mingw32*|*-cygwin*)
+@@ -11414,6 +11414,28 @@ case $host_os in
+     with_pthread=${with_pthread:-no}
+     ;;
+ 
++  ios*)
++    printf "%s\n" "#define WINE_IOS 1" >>confdefs.h
++
++    LIBEXT="dylib"
++    DLLFLAGS="$DLLFLAGS -fPIC"
++    LDDLLFLAGS="-fPIC"
++    enable_winemac_drv=no
++    wine_use_preloader=no
++
++    CORETEXT_LIBS="-framework CoreText"
++
++    COREFOUNDATION_LIBS="-framework CoreFoundation"
++
++    SECURITY_LIBS="-framework Security -framework CoreFoundation"
++
++    SYSTEMCONFIGURATION_LIBS="-framework SystemConfiguration"
++
++    WINELOADER_LDFLAGS=""
++    WINEPRELOADER_LDFLAGS=""
++    UNIXLDFLAGS="-dynamiclib -install_name @rpath/\$(UNIXLIB) -Wl,-rpath,@loader_path\/"
++    ;;
++
+   darwin*)
+     LIBEXT="dylib"
+     DLLFLAGS="$DLLFLAGS -fPIC"
+diff --git a/configure.ac b/configure.ac
+index b8ae3db..dcaffb8 100644
+--- a/configure.ac
++++ b/configure.ac
+@@ -108,7 +108,7 @@ AC_DEFINE_UNQUOTED(EXEEXT,["$ac_exeext"],[Define to the file extension for execu
+ AC_CHECK_TOOL(LD,ld)
+ 
+ case $host in
+-  *-darwin*)
++  *-darwin*|*-ios*)
+     with_fontconfig=${with_fontconfig:-no}
+     ;;
+   *-mingw32*|*-cygwin*)
+@@ -921,6 +921,30 @@ case $host_os in
+     with_pthread=${with_pthread:-no}
+     ;;
+ 
++  ios*)
++    dnl iOS uses Mach-O and Darwin dylibs, but does not provide the macOS
++    dnl desktop frameworks or the winemac window driver. Keep this platform
++    dnl block intentionally small; individual subsystems are enabled only
++    dnl after their iOS capability probes pass.
++    AC_DEFINE(WINE_IOS,1,[Define to 1 when building the iOS host runtime.])
++    LIBEXT="dylib"
++    DLLFLAGS="$DLLFLAGS -fPIC"
++    LDDLLFLAGS="-fPIC"
++    enable_winemac_drv=no
++    wine_use_preloader=no
++
++    AC_SUBST(CORETEXT_LIBS,"-framework CoreText")
++    AC_SUBST(COREFOUNDATION_LIBS,"-framework CoreFoundation")
++    AC_SUBST(SECURITY_LIBS,"-framework Security -framework CoreFoundation")
++    AC_SUBST(SYSTEMCONFIGURATION_LIBS,"-framework SystemConfiguration")
++
++    dnl The iOS runtime is embedded by the host app. A standalone macOS-style
++    dnl loader and preloader are not linked at this stage.
++    WINELOADER_LDFLAGS=""
++    WINEPRELOADER_LDFLAGS=""
++    UNIXLDFLAGS="-dynamiclib -install_name @rpath/\$(UNIXLIB) -Wl,-rpath,@loader_path\/"
++    ;;
++
+   darwin*)
+     LIBEXT="dylib"
+     DLLFLAGS="$DLLFLAGS -fPIC"
+diff --git a/include/config.h.in b/include/config.h.in
+index 8b1d33f..fb2ff2f 100644
+--- a/include/config.h.in
++++ b/include/config.h.in
+@@ -793,6 +793,9 @@
+    backward compatibility; new code need not use it. */
+ #undef STDC_HEADERS
+ 
++/* Define to 1 when building the iOS host runtime. */
++#undef WINE_IOS
++
+ /* Define if xattr functions take additional arguments (macOS) */
+ #undef XATTR_ADDITIONAL_OPTIONS
+ 
