@@ -351,3 +351,25 @@ index 42c8253..acfdb8e 100644
          {
              int d_type;
              if (ioctl(fd, FIODTYPE, &d_type) == 0)
+diff --git a/dlls/ntdll/unix/loader.c b/dlls/ntdll/unix/loader.c
+index cb700dd..46ce5ec 100644
+--- a/dlls/ntdll/unix/loader.c
++++ b/dlls/ntdll/unix/loader.c
+@@ -2048,7 +2048,7 @@ jint JNI_OnLoad( JavaVM *vm, void *reserved )
+ 
+ #endif  /* __ANDROID__ */
+ 
+-#ifdef __APPLE__
++#if defined(__APPLE__) && !defined(WINE_IOS)
+ static void *apple_wine_thread( void *arg )
+ {
+     start_main_thread();
+@@ -2297,7 +2297,7 @@ DECLSPEC_EXPORT void __wine_main( int argc, char *argv[] )
+     virtual_init();
+     init_environment();
+ 
+-#ifdef __APPLE__
++#if defined(__APPLE__) && !defined(WINE_IOS)
+     apple_main_thread();
+ #endif
+     start_main_thread();
