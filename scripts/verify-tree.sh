@@ -16,6 +16,7 @@ test "$WIOS_VERSION" = "0.0.1"
 for REQUIRED_PATH in \
     README.md \
     docs/MILESTONE-0.0.1.md \
+    reports/BUILD-PROBE-0002.md \
     patches/wine/series \
     patches/wine/0001-configure-add-ios-platform-target.patch \
     runtime/include/WIOSRuntimeABI.h \
@@ -23,6 +24,11 @@ for REQUIRED_PATH in \
     host/WineIOSHost/Sources/WIOSCapabilityProbe.mm; do
     test -f "$PROJECT_ROOT/$REQUIRED_PATH"
 done
+
+grep -q '^diff --git a/configure b/configure$' \
+    "$PROJECT_ROOT/patches/wine/0001-configure-add-ios-platform-target.patch"
+grep -q '^diff --git a/configure.ac b/configure.ac$' \
+    "$PROJECT_ROOT/patches/wine/0001-configure-add-ios-platform-target.patch"
 
 if [ -d "$PROJECT_ROOT/third_party/wine/.git" ]; then
     git -C "$PROJECT_ROOT/third_party/wine" apply --check \

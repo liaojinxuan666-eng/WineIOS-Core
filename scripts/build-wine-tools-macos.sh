@@ -7,6 +7,7 @@ PROJECT_ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)
 
 WINE_SOURCE=${1:-"$PROJECT_ROOT/third_party/wine"}
 TOOLS_BUILD=${2:-"$PROJECT_ROOT/build/wine-tools-macos"}
+LOG_ROOT="$PROJECT_ROOT/build/logs"
 
 if [[ "$(uname -s)" != "Darwin" ]]; then
     echo "Host Wine tools must be built on macOS." >&2
@@ -19,7 +20,7 @@ if [[ "$ACTUAL_COMMIT" != "$WINE_COMMIT" ]]; then
     exit 1
 fi
 
-mkdir -p "$TOOLS_BUILD"
+mkdir -p "$TOOLS_BUILD" "$LOG_ROOT"
 
 export PATH="$(brew --prefix bison)/bin:$(brew --prefix flex)/bin:$PATH"
 
@@ -27,6 +28,7 @@ if [[ ! -f "$TOOLS_BUILD/Makefile" ]]; then
     (
         cd "$TOOLS_BUILD"
         "$WINE_SOURCE/configure" \
+            --enable-archs=none \
             --disable-tests \
             --without-alsa \
             --without-capi \
@@ -51,14 +53,15 @@ if [[ ! -f "$TOOLS_BUILD/Makefile" ]]; then
             --without-usb \
             --without-vulkan \
             --without-wayland \
-            --without-x
+            --without-x \
+            2>&1 | tee "$LOG_ROOT/wine-tools-configure.log"
     )
 fi
 
 JOBS=$(sysctl -n hw.logicalcpu)
-make -C "$TOOLS_BUILD" -j"$JOBS" __tooldeps__
+make -C "$TOOLS_BUILD" -j"$JOBS" __tooldeps__ \
+    2>&1 | tee "$LOG_ROOT/wine-tools-build.log"
 
 test -x "$TOOLS_BUILD/tools/makedep"
 test -x "$TOOLS_BUILD/tools/winebuild/winebuild"
 echo "Host Wine tools ready: $TOOLS_BUILD"
-

@@ -1,11 +1,9 @@
 # Wine-iOS Core 0.0.1
 
-这是 iOS 上 Windows 兼容运行环境的最小可信起点。本仓库当前只负责：
+这是 iOS 上 Windows 兼容运行环境的最小可信起点。本仓库当前优先开发 Wine-iOS 核心：
 
 - 冻结 Wine 11.0 上游基线；
-- 构建一个可安装的 iOS ARM64 宿主 App；
-- 在真机上记录线程、TLS、文件和虚拟内存能力；
-- 以用户主动操作的方式测试 JIT 可执行内存；
+- 保留一个极简 iOS ARM64 宿主与能力探针，但暂不扩展 App 壳；
 - 定义 Wine 与后续闭源运行时之间稳定的 C ABI。
 - 建立同版本 macOS Wine tools → iOS ARM64 configure 的两阶段探针。
 
@@ -42,9 +40,11 @@ WineIOS-0.0.1/
 
 完整验收标准见 `docs/MILESTONE-0.0.1.md`。
 
-## 构建方式
+## 当前构建方式
 
-代码推入 GitHub 后，Actions 中的 `Build iOS Host 0.0.1` 会生成 `WineIOSHost-0.0.1.ipa`。构建使用 macOS 自带的 iPhoneOS SDK 和 clang，不要求用户在手机终端输入长命令。
+代码推入 GitHub 后，`Wine iOS core configure probe` 负责运行当前核心探针。它先构建同版本的 macOS Wine tools，再用 iPhoneOS SDK 和 LLVM 配置 Windows ARM64 PE + iOS ARM64 Unix runtime。完整日志作为 artifact 保存。
+
+`Build iOS Host 0.0.1` 现在只允许手动触发。宿主源码继续保留，但在 Wine 核心达到可初始化状态之前不继续扩展 UI 或启动器。
 
 本地 macOS 也可以运行：
 
@@ -55,11 +55,11 @@ bash scripts/package-ipa.sh
 
 ## 下一道门
 
-`0.0.1` 真机验收完成后，下一步才开始修改 Wine：
+当前核心门按以下顺序推进：
 
 1. 在同一提交上先构建宿主 Wine tools；
-2. 建立 `arm64-apple-ios` 目标配置；
-3. 记录首轮 configure/compile 阻塞点；
+2. 建立 `arm64-apple-ios` Unix runtime 配置，同时生成 Windows ARM64 PE；
+3. 记录首轮真实 configure/compile 阻塞点；
 4. 以小补丁逐项处理 Darwin/iOS 差异；
 5. 解决 Wine server 在 iOS 进程模型下的启动方式；
 6. 只构建 PE 加载闭包、`ntdll`、`kernelbase`、`kernel32` 和必要依赖；

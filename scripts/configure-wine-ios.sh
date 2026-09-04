@@ -31,9 +31,17 @@ SDK_PATH=$(xcrun --sdk iphoneos --show-sdk-path)
 CLANG=$(xcrun --sdk iphoneos --find clang)
 CLANGXX=$(xcrun --sdk iphoneos --find clang++)
 IOS_TARGET="arm64-apple-ios$WIOS_MIN_IOS"
+BREW_LLVM=$(brew --prefix llvm)
+PE_CLANG=${WIOS_PE_CLANG:-"$BREW_LLVM/bin/clang"}
+
+if [[ ! -x "$PE_CLANG" ]]; then
+    echo "LLVM PE compiler is missing: $PE_CLANG" >&2
+    echo "Install Homebrew llvm or set WIOS_PE_CLANG." >&2
+    exit 1
+fi
 
 mkdir -p "$IOS_BUILD" "$LOG_ROOT"
-export PATH="$(brew --prefix bison)/bin:$(brew --prefix flex)/bin:$PATH"
+export PATH="$BREW_LLVM/bin:$(brew --prefix bison)/bin:$(brew --prefix flex)/bin:$PATH"
 export CC="$CLANG -target $IOS_TARGET -isysroot $SDK_PATH"
 export CXX="$CLANGXX -target $IOS_TARGET -isysroot $SDK_PATH"
 export OBJC="$CC"
@@ -49,6 +57,7 @@ export LDFLAGS="-Wl,-dead_strip"
         --build="$("$WINE_SOURCE/tools/config.guess")" \
         --host=aarch64-apple-ios \
         --with-wine-tools="$TOOLS_BUILD" \
+        --with-mingw="$PE_CLANG" \
         --disable-tests \
         --without-alsa \
         --without-capi \
@@ -65,7 +74,6 @@ export LDFLAGS="-Wl,-dead_strip"
         --without-gstreamer \
         --without-inotify \
         --without-krb5 \
-        --without-mingw \
         --without-netapi \
         --without-opencl \
         --without-opengl \
@@ -86,6 +94,8 @@ export LDFLAGS="-Wl,-dead_strip"
 
 grep -q '^host_os = ios' "$IOS_BUILD/Makefile"
 grep -q '^HOST_ARCH = aarch64' "$IOS_BUILD/Makefile"
-grep -q '^LIBEXT = dylib' "$IOS_BUILD/Makefile"
+grep -q '^PE_ARCHS =  aarch64' "$IOS_BUILD/Makefile"
+grep -q '^UNIXLDFLAGS = -dynamiclib ' "$IOS_BUILD/Makefile"
+grep -q '^WINELOADER_LDFLAGS = $' "$IOS_BUILD/Makefile"
+grep -q '^#define WINE_IOS 1' "$IOS_BUILD/include/config.h"
 echo "Wine iOS configure gate passed"
-

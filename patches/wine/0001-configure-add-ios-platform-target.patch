@@ -1,8 +1,50 @@
+diff --git a/configure b/configure
+index df4c4a9..bc44a12 100755
+--- a/configure
++++ b/configure
+@@ -6411,7 +6411,7 @@ fi
+ 
+ 
+ case $host in
+-  *-darwin*)
++  *-darwin*|*-ios*)
+     with_fontconfig=${with_fontconfig:-no}
+     ;;
+   *-mingw32*|*-cygwin*)
+@@ -11414,6 +11414,28 @@ case $host_os in
+     with_pthread=${with_pthread:-no}
+     ;;
+ 
++  ios*)
++    printf "%s\n" "#define WINE_IOS 1" >>confdefs.h
++
++    LIBEXT="dylib"
++    DLLFLAGS="$DLLFLAGS -fPIC"
++    LDDLLFLAGS="-fPIC"
++    enable_winemac_drv=no
++    wine_use_preloader=no
++
++    CORETEXT_LIBS="-framework CoreText"
++
++    COREFOUNDATION_LIBS="-framework CoreFoundation"
++
++    SECURITY_LIBS="-framework Security -framework CoreFoundation"
++
++    SYSTEMCONFIGURATION_LIBS="-framework SystemConfiguration"
++
++    WINELOADER_LDFLAGS=""
++    WINEPRELOADER_LDFLAGS=""
++    UNIXLDFLAGS="-dynamiclib -install_name @rpath/\$(UNIXLIB) -Wl,-rpath,@loader_path\/"
++    ;;
++
+   darwin*)
+     LIBEXT="dylib"
+     DLLFLAGS="$DLLFLAGS -fPIC"
 diff --git a/configure.ac b/configure.ac
 index b8ae3db..dcaffb8 100644
 --- a/configure.ac
 +++ b/configure.ac
-@@ -108,7 +108,7 @@ AC_CHECK_TOOL(CPPBIN,cpp,cpp)
+@@ -108,7 +108,7 @@ AC_DEFINE_UNQUOTED(EXEEXT,["$ac_exeext"],[Define to the file extension for execu
  AC_CHECK_TOOL(LD,ld)
  
  case $host in
