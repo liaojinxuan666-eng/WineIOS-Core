@@ -16,6 +16,12 @@ jobs:
       - name: Install build tools
         run: brew install bison flex llvm
 
+      - name: Activate updated core scripts
+        run: |
+          cp apply-wine-patches.sh scripts/apply-wine-patches.sh
+          cp configure-wine-ios.sh scripts/configure-wine-ios.sh
+          cp run-wine-ios-probe.sh scripts/run-wine-ios-probe.sh
+
       - name: Run Wine iOS core probe
         run: bash scripts/run-wine-ios-probe.sh
 
