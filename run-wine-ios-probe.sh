@@ -6,6 +6,11 @@ PROJECT_ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)
 WINE_SOURCE="$PROJECT_ROOT/third_party/wine"
 IOS_BUILD="$PROJECT_ROOT/build/wine-ios-arm64"
 LOG_ROOT="$PROJECT_ROOT/build/logs"
+LLVM_MINGW_VERSION=20260826
+LLVM_MINGW_NAME="llvm-mingw-$LLVM_MINGW_VERSION-ucrt-macos-universal"
+LLVM_MINGW_ROOT="$PROJECT_ROOT/build/toolchains/$LLVM_MINGW_NAME"
+LLVM_MINGW_ARCHIVE="$PROJECT_ROOT/build/toolchains/$LLVM_MINGW_NAME.tar.xz"
+LLVM_MINGW_SHA256=48bedd161f14ae25a3646cb750b57ee3188e97e34bd3c52240c1810aa74d6a7f
 
 mkdir -p "$LOG_ROOT"
 
@@ -35,6 +40,20 @@ probe_step build-host-tools
 bash "$PROJECT_ROOT/scripts/build-wine-tools-macos.sh" "$WINE_SOURCE"
 probe_step apply-ios-patches
 bash "$PROJECT_ROOT/scripts/apply-wine-patches.sh" "$WINE_SOURCE"
+probe_step fetch-arm64-pe-toolchain
+mkdir -p "$PROJECT_ROOT/build/toolchains"
+if [[ ! -x "$LLVM_MINGW_ROOT/bin/aarch64-w64-mingw32-clang" ]]; then
+    LLVM_MINGW_DOWNLOAD="$LLVM_MINGW_ARCHIVE.download"
+    curl --fail --location --retry 3 --output "$LLVM_MINGW_DOWNLOAD" \
+        "https://github.com/mstorsjo/llvm-mingw/releases/download/$LLVM_MINGW_VERSION/$LLVM_MINGW_NAME.tar.xz"
+    printf '%s  %s\n' "$LLVM_MINGW_SHA256" "$LLVM_MINGW_DOWNLOAD" | shasum -a 256 --check
+    mv "$LLVM_MINGW_DOWNLOAD" "$LLVM_MINGW_ARCHIVE"
+    tar -xJf "$LLVM_MINGW_ARCHIVE" -C "$PROJECT_ROOT/build/toolchains"
+fi
+test -x "$LLVM_MINGW_ROOT/bin/aarch64-w64-mingw32-clang"
+"$LLVM_MINGW_ROOT/bin/aarch64-w64-mingw32-clang" --version \
+    | tee "$LOG_ROOT/llvm-mingw-version.log"
+export WIOS_LLVM_MINGW_ROOT="$LLVM_MINGW_ROOT"
 probe_step configure-ios-arm64
 bash "$PROJECT_ROOT/scripts/configure-wine-ios.sh" "$WINE_SOURCE"
 probe_step compile-ntdll-unix
@@ -111,9 +130,31 @@ file "$WINESERVER" | tee "$LOG_ROOT/wine-ios-wineserver-inspect.log"
 xcrun lipo -info "$WINESERVER" | tee -a "$LOG_ROOT/wine-ios-wineserver-inspect.log"
 xcrun vtool -show-build "$WINESERVER" | tee -a "$LOG_ROOT/wine-ios-wineserver-inspect.log"
 
+probe_step compile-windows-arm64-core-pe
+make -C "$IOS_BUILD" -j"$JOBS" \
+    dlls/ntdll/ntdll.dll \
+    dlls/kernelbase/kernelbase.dll \
+    dlls/kernel32/kernel32.dll \
+    2>&1 | tee "$LOG_ROOT/wine-ios-arm64-pe-build.log"
+
+PE_INSPECT_LOG="$LOG_ROOT/wine-ios-arm64-pe-inspect.log"
+: > "$PE_INSPECT_LOG"
+for module in \
+    dlls/ntdll/ntdll.dll \
+    dlls/kernelbase/kernelbase.dll \
+    dlls/kernel32/kernel32.dll
+do
+    PE_FILE="$IOS_BUILD/$module"
+    test -f "$PE_FILE"
+    file "$PE_FILE" | tee -a "$PE_INSPECT_LOG"
+    "$LLVM_MINGW_ROOT/bin/aarch64-w64-mingw32-objdump" -f "$PE_FILE" \
+        | tee -a "$PE_INSPECT_LOG"
+done
+
 trap - ERR
 echo "CONFIGURE=PASS" | tee "$LOG_ROOT/probe-summary.txt"
 echo "IOS_UNIX_RUNTIME=CONFIGURED" | tee -a "$LOG_ROOT/probe-summary.txt"
 echo "NTDLL_UNIXLIB=PASS" | tee -a "$LOG_ROOT/probe-summary.txt"
 echo "WINESERVER=PASS" | tee -a "$LOG_ROOT/probe-summary.txt"
-echo "WINDOWS_ARM64_PE=NOT_RUN" | tee -a "$LOG_ROOT/probe-summary.txt"
+echo "WINDOWS_ARM64_CORE_PE=PASS" | tee -a "$LOG_ROOT/probe-summary.txt"
+echo "WINDOWS_ARM64_HELLO=NOT_RUN" | tee -a "$LOG_ROOT/probe-summary.txt"
