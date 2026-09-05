@@ -48,8 +48,19 @@ file "$NTDLL_UNIXLIB" | tee "$LOG_ROOT/wine-ios-ntdll-inspect.log"
 xcrun lipo -info "$NTDLL_UNIXLIB" | tee -a "$LOG_ROOT/wine-ios-ntdll-inspect.log"
 xcrun vtool -show-build "$NTDLL_UNIXLIB" | tee -a "$LOG_ROOT/wine-ios-ntdll-inspect.log"
 
+probe_step compile-wineserver
+make -C "$IOS_BUILD" -j"$JOBS" server/wineserver \
+    2>&1 | tee "$LOG_ROOT/wine-ios-wineserver-build.log"
+
+WINESERVER="$IOS_BUILD/server/wineserver"
+test -f "$WINESERVER"
+file "$WINESERVER" | tee "$LOG_ROOT/wine-ios-wineserver-inspect.log"
+xcrun lipo -info "$WINESERVER" | tee -a "$LOG_ROOT/wine-ios-wineserver-inspect.log"
+xcrun vtool -show-build "$WINESERVER" | tee -a "$LOG_ROOT/wine-ios-wineserver-inspect.log"
+
 trap - ERR
 echo "CONFIGURE=PASS" | tee "$LOG_ROOT/probe-summary.txt"
 echo "IOS_UNIX_RUNTIME=CONFIGURED" | tee -a "$LOG_ROOT/probe-summary.txt"
 echo "NTDLL_UNIXLIB=PASS" | tee -a "$LOG_ROOT/probe-summary.txt"
+echo "WINESERVER=PASS" | tee -a "$LOG_ROOT/probe-summary.txt"
 echo "WINDOWS_ARM64_PE=NOT_RUN" | tee -a "$LOG_ROOT/probe-summary.txt"
