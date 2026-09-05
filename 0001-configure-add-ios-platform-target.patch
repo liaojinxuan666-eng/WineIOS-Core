@@ -11,7 +11,7 @@ index df4c4a9..bc44a12 100755
      with_fontconfig=${with_fontconfig:-no}
      ;;
    *-mingw32*|*-cygwin*)
-@@ -11414,6 +11414,28 @@ case $host_os in
+@@ -11414,6 +11414,30 @@ case $host_os in
      with_pthread=${with_pthread:-no}
      ;;
  
@@ -27,6 +27,8 @@ index df4c4a9..bc44a12 100755
 +    CORETEXT_LIBS="-framework CoreText"
 +
 +    COREFOUNDATION_LIBS="-framework CoreFoundation"
++
++    IOKIT_LIBS="-framework IOKit -framework CoreFoundation"
 +
 +    SECURITY_LIBS="-framework Security -framework CoreFoundation"
 +
@@ -53,7 +55,7 @@ index b8ae3db..dcaffb8 100644
      with_fontconfig=${with_fontconfig:-no}
      ;;
    *-mingw32*|*-cygwin*)
-@@ -921,6 +921,30 @@ case $host_os in
+@@ -921,6 +921,31 @@ case $host_os in
      with_pthread=${with_pthread:-no}
      ;;
  
@@ -71,6 +73,7 @@ index b8ae3db..dcaffb8 100644
 +
 +    AC_SUBST(CORETEXT_LIBS,"-framework CoreText")
 +    AC_SUBST(COREFOUNDATION_LIBS,"-framework CoreFoundation")
++    AC_SUBST(IOKIT_LIBS,"-framework IOKit -framework CoreFoundation")
 +    AC_SUBST(SECURITY_LIBS,"-framework Security -framework CoreFoundation")
 +    AC_SUBST(SYSTEMCONFIGURATION_LIBS,"-framework SystemConfiguration")
 +
