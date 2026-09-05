@@ -131,18 +131,20 @@ xcrun lipo -info "$WINESERVER" | tee -a "$LOG_ROOT/wine-ios-wineserver-inspect.l
 xcrun vtool -show-build "$WINESERVER" | tee -a "$LOG_ROOT/wine-ios-wineserver-inspect.log"
 
 probe_step compile-windows-arm64-core-pe
+# Wine's multiarch PE rules include the architecture directory.
+# Share the list between build and inspection so the paths cannot drift.
+PE_MODULES=(
+    dlls/ntdll/aarch64-windows/ntdll.dll
+    dlls/kernelbase/aarch64-windows/kernelbase.dll
+    dlls/kernel32/aarch64-windows/kernel32.dll
+)
 make -C "$IOS_BUILD" -j"$JOBS" \
-    dlls/ntdll/ntdll.dll \
-    dlls/kernelbase/kernelbase.dll \
-    dlls/kernel32/kernel32.dll \
+    "${PE_MODULES[@]}" \
     2>&1 | tee "$LOG_ROOT/wine-ios-arm64-pe-build.log"
 
 PE_INSPECT_LOG="$LOG_ROOT/wine-ios-arm64-pe-inspect.log"
 : > "$PE_INSPECT_LOG"
-for module in \
-    dlls/ntdll/ntdll.dll \
-    dlls/kernelbase/kernelbase.dll \
-    dlls/kernel32/kernel32.dll
+for module in "${PE_MODULES[@]}"
 do
     PE_FILE="$IOS_BUILD/$module"
     test -f "$PE_FILE"
