@@ -152,9 +152,9 @@ PE_INSPECT_LOG="$LOG_ROOT/wine-ios-arm64-pe-inspect.log"
 for module in "${PE_MODULES[@]}"
 do
     PE_FILE="$IOS_BUILD/$module"
-    test -p "$PE_FILE"
+    test -f "$PE_FILE"
     file "$PE_FILE" | tee -a "$PE_INSPECT_LOG"
-    "$LLVM_MINGW_ROOT/bin/aarch64-w64-mingw32-objdump" -f "$PE_FILE" \
+    "$LLVM_MINGW_ROOT/bin/aarch64-w64-mingw32-objdump" -p "$PE_FILE" \
         | tee -a "$PE_INSPECT_LOG"
 done
 
