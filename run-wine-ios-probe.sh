@@ -152,11 +152,55 @@ PE_INSPECT_LOG="$LOG_ROOT/wine-ios-arm64-pe-inspect.log"
 for module in "${PE_MODULES[@]}"
 do
     PE_FILE="$IOS_BUILD/$module"
-    test -f "$PE_FILE"
+    test -p "$PE_FILE"
     file "$PE_FILE" | tee -a "$PE_INSPECT_LOG"
     "$LLVM_MINGW_ROOT/bin/aarch64-w64-mingw32-objdump" -f "$PE_FILE" \
         | tee -a "$PE_INSPECT_LOG"
 done
+
+
+probe_step compile-wine-loader
+make -C "$IOS_BUILD" -j"$JOBS" loader/wine \
+    2>&1 | tee "$LOG_ROOT/wine-ios-loader-build.log"
+WINE_LOADER="$IOS_BUILD/loader/wine"
+test -f "$WINE_LOADER"
+file "$WINE_LOADER" | tee "$LOG_ROOT/wine-ios-loader-inspect.log"
+xcrun lipo -info "$WINE_LOADER" | tee -a "$LOG_ROOT/wine-ios-loader-inspect.log"
+xcrun vtool -show-build "$WINE_LOADER" | tee -a "$LOG_ROOT/wine-ios-loader-inspect.log"
+xcrun otool -L "$WINE_LOADER" | tee -a "$LOG_ROOT/wine-ios-loader-inspect.log"
+grep -Eq 'platform +IOS$' "$LOG_ROOT/wine-ios-loader-inspect.log"
+test "$(xcrun lipo -archs "$WINE_LOADER")" = arm64
+
+probe_step compile-arm64-hello
+HELLO_DIR="$IOS_BUILD/hello"
+mkdir -p "$HELLO_DIR"
+# Build-only sample. Requires a real Wine process and redirected stdout at runtime.
+cat > "$HELLO_DIR/hello.c" <<'WIOS_HELLO_SOURCE'
+#include <windows.h>
+void hello_entry(void)
+{
+    static const char message[] = "Wine-iOS ARM64 hello\r\n";
+    DWORD written = 0;
+    HANDLE output = GetStdHandle(STD_OUTPUT_HANDLE);
+    if (output == NULL || output == INVALID_HANDLE_VALUE) ExitProcess(10);
+    if (!WriteFile(output, message, sizeof(message) - 1, &written, NULL)) ExitProcess(11);
+    if (written != sizeof(message) - 1) ExitProcess(12);
+    ExitProcess(0);
+}
+WIOS_HELLO_SOURCE
+aarch64-w64-mingw32-clang -Os -fno-stack-protector -nostdlib \
+    "$HELLO_DIR/hello.c" -Wl,--entry,hello_entry -Wl,--subsystem,console \
+    -lkernel32 -o "$HELLO_DIR/hello.exe" \
+    2>&1 | tee "$LOG_ROOT/wine-ios-hello-build.log"
+file "$HELLO_DIR/hello.exe" | tee "$LOG_ROOT/wine-ios-hello-inspect.log"
+grep -q 'PE32+.*Aarch64' "$LOG_ROOT/wine-ios-hello-inspect.log"
+aarch64-w64-mingw32-objdump -p "$HELLO_DIR/hello.exe" \
+    | tee -a "$LOG_ROOT/wine-ios-hello-inspect.log"
+HELLO_IMPORTS=$(sed -n 's/.*DLL Name: //p' "$LOG_ROOT/wine-ios-hello-inspect.log" \
+    | tr '[:upper:]' '[:lower:]' | tr -d '\r')
+test "$HELLO_IMPORTS" = kernel32.dll
+cp "$HELLO_DIR/hello.c" "$LOG_ROOT/hello.c"
+cp "$HELLO_DIR/hello.exe" "$LOG_ROOT/hello.exe"
 
 trap - ERR
 echo "CONFIGURE=PASS" | tee "$LOG_ROOT/probe-summary.txt"
@@ -164,4 +208,7 @@ echo "IOS_UNIX_RUNTIME=CONFIGURED" | tee -a "$LOG_ROOT/probe-summary.txt"
 echo "NTDLL_UNIXLIB=PASS" | tee -a "$LOG_ROOT/probe-summary.txt"
 echo "WINESERVER=PASS" | tee -a "$LOG_ROOT/probe-summary.txt"
 echo "WINDOWS_ARM64_CORE_PE=PASS" | tee -a "$LOG_ROOT/probe-summary.txt"
+echo "IOS_WINE_LOADER_BUILD=PASS" | tee -a "$LOG_ROOT/probe-summary.txt"
+echo "WINDOWS_ARM64_HELLO_BUILD=PASS" | tee -a "$LOG_ROOT/probe-summary.txt"
+echo "IOS_WINE_INITIALIZATION=NOT_RUN" | tee -a "$LOG_ROOT/probe-summary.txt"
 echo "WINDOWS_ARM64_HELLO=NOT_RUN" | tee -a "$LOG_ROOT/probe-summary.txt"
