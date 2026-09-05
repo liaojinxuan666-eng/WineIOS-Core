@@ -54,6 +54,11 @@ test -x "$LLVM_MINGW_ROOT/bin/aarch64-w64-mingw32-clang"
 "$LLVM_MINGW_ROOT/bin/aarch64-w64-mingw32-clang" --version \
     | tee "$LOG_ROOT/llvm-mingw-version.log"
 export WIOS_LLVM_MINGW_ROOT="$LLVM_MINGW_ROOT"
+# configure runs in a child shell; its PATH exports cannot reach this driver.
+# Keep the PE compiler and its companion tools available to every make step.
+export PATH="$LLVM_MINGW_ROOT/bin:$PATH"
+command -v aarch64-w64-mingw32-clang | tee -a "$LOG_ROOT/llvm-mingw-version.log"
+aarch64-w64-mingw32-clang --version >> "$LOG_ROOT/llvm-mingw-version.log"
 probe_step configure-ios-arm64
 bash "$PROJECT_ROOT/scripts/configure-wine-ios.sh" "$WINE_SOURCE"
 probe_step compile-ntdll-unix
