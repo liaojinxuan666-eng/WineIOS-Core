@@ -1,5 +1,5 @@
 diff --git a/configure b/configure
-index df4c4a9..bc44a12 100755
+index df4c4a9..37e10dc 100755
 --- a/configure
 +++ b/configure
 @@ -6411,7 +6411,7 @@ fi
@@ -43,7 +43,7 @@ index df4c4a9..bc44a12 100755
      LIBEXT="dylib"
      DLLFLAGS="$DLLFLAGS -fPIC"
 diff --git a/configure.ac b/configure.ac
-index b8ae3db..dcaffb8 100644
+index b8ae3db..5469e08 100644
 --- a/configure.ac
 +++ b/configure.ac
 @@ -108,7 +108,7 @@ AC_DEFINE_UNQUOTED(EXEEXT,["$ac_exeext"],[Define to the file extension for execu
@@ -87,20 +87,6 @@ index b8ae3db..dcaffb8 100644
    darwin*)
      LIBEXT="dylib"
      DLLFLAGS="$DLLFLAGS -fPIC"
-diff --git a/include/config.h.in b/include/config.h.in
-index 8b1d33f..fb2ff2f 100644
---- a/include/config.h.in
-+++ b/include/config.h.in
-@@ -793,6 +793,9 @@
-    backward compatibility; new code need not use it. */
- #undef STDC_HEADERS
- 
-+/* Define to 1 when building the iOS host runtime. */
-+#undef WINE_IOS
-+
- /* Define if xattr functions take additional arguments (macOS) */
- #undef XATTR_ADDITIONAL_OPTIONS
- 
 diff --git a/dlls/ntdll/unix/cdrom.c b/dlls/ntdll/unix/cdrom.c
 index 0836508..0139d8e 100644
 --- a/dlls/ntdll/unix/cdrom.c
@@ -377,7 +363,7 @@ index cb700dd..46ce5ec 100644
  #endif
      start_main_thread();
 diff --git a/dlls/ntdll/unix/server.c b/dlls/ntdll/unix/server.c
-index 258a959..b792045 100644
+index 258a959..9fc1299 100644
 --- a/dlls/ntdll/unix/server.c
 +++ b/dlls/ntdll/unix/server.c
 @@ -1472,6 +1472,7 @@ static int server_connect(void)
@@ -404,6 +390,18 @@ index 258a959..b792045 100644
 +#if defined(__APPLE__) && !defined(WINE_IOS)
      send_server_task_port();
  #endif
+ 
+@@ -1764,7 +1766,11 @@ void server_init_process_done(void)
+     }
+     SERVER_END_REQ;
+ 
++#ifdef WINE_IOS
++    if (status) fatal_error( "iOS process initialization failed: %08x\n", (unsigned int)status );
++#else
+     assert( !status );
++#endif
+     signal_start_thread( main_image_info.TransferAddress, peb, suspend, NtCurrentTeb() );
+ }
  
 diff --git a/dlls/ntdll/unix/system.c b/dlls/ntdll/unix/system.c
 index 350bcea..0b11324 100644
@@ -461,3 +459,238 @@ index 111849d..ffbdc9f 100644
  
  #ifdef __i386__
      static const mach_vm_address_t max_address = VM_MAX_ADDRESS;
+diff --git a/include/config.h.in b/include/config.h.in
+index bfc8c20..6374f46 100644
+--- a/include/config.h.in
++++ b/include/config.h.in
+@@ -818,6 +818,9 @@
+    backward compatibility; new code need not use it. */
+ #undef STDC_HEADERS
+ 
++/* Define to 1 when building the iOS host runtime. */
++#undef WINE_IOS
++
+ /* Define if xattr functions take additional arguments (macOS) */
+ #undef XATTR_ADDITIONAL_OPTIONS
+ 
+diff --git a/server/mach.c b/server/mach.c
+index 0f75d89..7e0e765 100644
+--- a/server/mach.c
++++ b/server/mach.c
+@@ -46,10 +46,35 @@
+ #include <mach/mach.h>
+ #include <mach/mach_error.h>
+ #include <mach/thread_act.h>
++#ifdef WINE_IOS
++#include <mach/vm_map.h>
++
++typedef vm_address_t wine_vm_address_t;
++typedef vm_size_t wine_vm_size_t;
++typedef vm_offset_t wine_vm_offset_t;
++#define wine_vm_read_overwrite vm_read_overwrite
++#define wine_vm_write vm_write
++#define wine_vm_region vm_region_64
++#define wine_vm_protect vm_protect
++
++/* The iPhoneOS SDK exposes the native-width VM API. This port is ARM64-only. */
++C_ASSERT( sizeof(vm_address_t) == 8 );
++C_ASSERT( sizeof(vm_size_t) == 8 );
++C_ASSERT( sizeof(vm_offset_t) == 8 );
++#else
+ #include <mach/mach_vm.h>
+ #include <servers/bootstrap.h>
+ 
++typedef mach_vm_address_t wine_vm_address_t;
++typedef mach_vm_size_t wine_vm_size_t;
++typedef mach_vm_offset_t wine_vm_offset_t;
++#define wine_vm_read_overwrite mach_vm_read_overwrite
++#define wine_vm_write mach_vm_write
++#define wine_vm_region mach_vm_region
++#define wine_vm_protect mach_vm_protect
++
+ static mach_port_t server_mach_port;
++#endif
+ 
+ void sigchld_callback(void)
+ {
+@@ -93,11 +118,14 @@ static int is_rosetta( void )
+     return rosetta_status;
+ }
+ 
++#ifndef WINE_IOS
+ extern kern_return_t bootstrap_register2( mach_port_t bp, name_t service_name, mach_port_t sp, uint64_t flags );
++#endif
+ 
+ /* initialize the process control mechanism */
+ void init_tracing_mechanism(void)
+ {
++#ifndef WINE_IOS
+     mach_port_t bp;
+ 
+     if (task_get_bootstrap_port( mach_task_self(), &bp ) != KERN_SUCCESS)
+@@ -112,11 +140,40 @@ void init_tracing_mechanism(void)
+     if (bootstrap_register2( bp, server_dir, server_mach_port, 0 ) != KERN_SUCCESS)
+         fatal_error( "Can't check in server_mach_port\n" );
+     mach_port_deallocate( mach_task_self(), bp );
++#endif
++    /* iOS acquires each client task port during init_process_tracing(). */
+ }
+ 
+ /* initialize the per-process tracing mechanism */
+ void init_process_tracing( struct process *process )
+ {
++#ifdef WINE_IOS
++    mach_port_t port = MACH_PORT_NULL;
++    kern_return_t ret;
++    int pid;
++
++    if (process->trace_data) return;
++    if (process->unix_pid <= 0)
++    {
++        set_error( STATUS_INVALID_PARAMETER );
++        return;
++    }
++    ret = task_for_pid( mach_task_self(), process->unix_pid, &port );
++    if (ret != KERN_SUCCESS || !MACH_PORT_VALID(port))
++    {
++        fprintf( stderr, "wine: iOS task_for_pid(%d) failed: %d (%s)\n",
++                 process->unix_pid, ret, mach_error_string(ret) );
++        set_error( STATUS_ACCESS_DENIED );
++        return;
++    }
++    if (pid_for_task( port, &pid ) != KERN_SUCCESS || pid != process->unix_pid)
++    {
++        mach_port_deallocate( mach_task_self(), port );
++        set_error( STATUS_ACCESS_DENIED );
++        return;
++    }
++    process->trace_data = port;
++#else
+     int pid, ret;
+     struct
+     {
+@@ -155,6 +212,7 @@ void init_process_tracing( struct process *process )
+                 mach_port_deallocate( mach_task_self(), msg.task_port.name );
+         }
+     }
++#endif
+     /* On Mach thread priorities depend on having the process port available, so
+      * reapply all thread priorities here after process tracing is initialized */
+     set_process_base_priority( process, process->base_priority );
+@@ -395,7 +453,7 @@ int send_thread_signal( struct thread *thread, int sig )
+ int read_process_memory( struct process *process, client_ptr_t ptr, data_size_t size, char *dest )
+ {
+     kern_return_t ret;
+-    mach_vm_size_t bytes_read;
++    wine_vm_size_t bytes_read;
+     mach_port_t process_port = get_process_port( process );
+ 
+     if (!process_port)
+@@ -403,13 +461,13 @@ int read_process_memory( struct process *process, client_ptr_t ptr, data_size_t
+         set_error( STATUS_ACCESS_DENIED );
+         return 0;
+     }
+-    if ((mach_vm_address_t)ptr != ptr)
++    if ((wine_vm_address_t)ptr != ptr)
+     {
+         set_error( STATUS_ACCESS_DENIED );
+         return 0;
+     }
+ 
+-    ret = mach_vm_read_overwrite( process_port, (mach_vm_address_t)ptr, (mach_vm_size_t)size, (mach_vm_address_t)dest, &bytes_read );
++    ret = wine_vm_read_overwrite( process_port, (wine_vm_address_t)ptr, (wine_vm_size_t)size, (wine_vm_address_t)dest, &bytes_read );
+     mach_set_error( ret );
+     return (ret == KERN_SUCCESS);
+ }
+@@ -420,7 +478,7 @@ int write_process_memory( struct process *process, client_ptr_t ptr, data_size_t
+ {
+     kern_return_t ret;
+     mach_port_t process_port = get_process_port( process );
+-    mach_vm_offset_t data;
++    wine_vm_offset_t data;
+ 
+     if (written) *written = 0;
+ 
+@@ -429,7 +487,7 @@ int write_process_memory( struct process *process, client_ptr_t ptr, data_size_t
+         set_error( STATUS_ACCESS_DENIED );
+         return 0;
+     }
+-    if ((mach_vm_address_t)ptr != ptr)
++    if ((wine_vm_address_t)ptr != ptr)
+     {
+         set_error( STATUS_ACCESS_DENIED );
+         return 0;
+@@ -442,25 +500,25 @@ int write_process_memory( struct process *process, client_ptr_t ptr, data_size_t
+ 
+     memcpy( (void *)data, src, size );
+ 
+-    ret = mach_vm_write( process_port, (mach_vm_address_t)ptr, data, (mach_msg_type_number_t)size );
++    ret = wine_vm_write( process_port, (wine_vm_address_t)ptr, data, (mach_msg_type_number_t)size );
+ 
+     /*
+      * On arm64 macOS, enabling execute permission for a memory region automatically disables write
+      * permission for that region. This can also happen under Rosetta sometimes.
+-     * In that case mach_vm_write returns KERN_INVALID_ADDRESS.
++     * In that case wine_vm_write returns KERN_INVALID_ADDRESS.
+      */
+ 
+     if (ret == KERN_INVALID_ADDRESS)
+     {
+-        mach_vm_address_t current_address = (mach_vm_address_t)ptr;
+-        mach_vm_address_t region_address = current_address;
+-        mach_vm_size_t region_size, write_size;
++        wine_vm_address_t current_address = (wine_vm_address_t)ptr;
++        wine_vm_address_t region_address = current_address;
++        wine_vm_size_t region_size, write_size;
+         vm_region_basic_info_data_64_t info;
+         mach_msg_type_number_t info_count = VM_REGION_BASIC_INFO_COUNT_64;
+         mach_port_t object_name;
+         data_size_t remaining_size = size;
+ 
+-        ret = mach_vm_region( process_port, &region_address, &region_size, VM_REGION_BASIC_INFO_64,
++        ret = wine_vm_region( process_port, &region_address, &region_size, VM_REGION_BASIC_INFO_64,
+                      (vm_region_info_t)&info, &info_count, &object_name );
+         if (ret != KERN_SUCCESS)
+             goto out;
+@@ -498,7 +556,7 @@ int write_process_memory( struct process *process, client_ptr_t ptr, data_size_t
+         {
+             region_address = current_address;
+             info_count = VM_REGION_BASIC_INFO_COUNT_64;
+-            ret = mach_vm_region( process_port, &region_address, &region_size, VM_REGION_BASIC_INFO_64,
++            ret = wine_vm_region( process_port, &region_address, &region_size, VM_REGION_BASIC_INFO_64,
+                      (vm_region_info_t)&info, &info_count, &object_name );
+             if (ret != KERN_SUCCESS) break;
+ 
+@@ -519,15 +577,15 @@ int write_process_memory( struct process *process, client_ptr_t ptr, data_size_t
+             write_size = region_size - (current_address - region_address);
+             if (write_size > remaining_size) write_size = remaining_size;
+ 
+-            ret = mach_vm_protect( process_port, current_address, write_size, 0,
++            ret = wine_vm_protect( process_port, current_address, write_size, 0,
+                     VM_PROT_READ | VM_PROT_WRITE );
+             if (ret != KERN_SUCCESS) break;
+ 
+-            ret = mach_vm_write( process_port, current_address,
+-                    data + (current_address - (mach_vm_address_t)ptr), write_size );
++            ret = wine_vm_write( process_port, current_address,
++                    data + (current_address - (wine_vm_address_t)ptr), write_size );
+             if (ret != KERN_SUCCESS) break;
+ 
+-            ret = mach_vm_protect( process_port, current_address, write_size, 0,
++            ret = wine_vm_protect( process_port, current_address, write_size, 0,
+                     info.protection );
+             if (ret != KERN_SUCCESS) break;
+ 
+diff --git a/server/process.c b/server/process.c
+index a06aa83..90a6fed 100644
+--- a/server/process.c
++++ b/server/process.c
+@@ -1489,5 +1489,8 @@ DECL_HANDLER(init_process_done)
+     process->start_time = current_time;
+ 
+     init_process_tracing( process );
++#ifdef WINE_IOS
++    if (get_error()) return;
++#endif
+     generate_startup_debug_events( process );
+     set_process_startup_state( process, STARTUP_DONE );
