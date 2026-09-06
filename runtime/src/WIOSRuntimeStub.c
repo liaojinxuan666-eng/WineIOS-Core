@@ -5,12 +5,14 @@
 #include <errno.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
 
 #include "wine/server.h"
 
 #define WIOS_STATUS_INVALID_HANDLE 0xC0000008u
+#define WIOS_MAIN_PROBE_STAGE_PATHS 1u
 
 static void *ntdll_handle;
 static void *wine_main_entry;
@@ -22,8 +24,11 @@ typedef int (*wios_core_bool_fn)(void);
 typedef uint32_t (*wios_core_close_handle_fn)(uint32_t handle);
 typedef void (*wios_ntdll_set_bridge_fn)(uint32_t (*bridge)(void *));
 typedef uint32_t (*wios_ntdll_probe_call_fn)(void *);
+typedef void (*wios_wine_main_fn)(int argc, char **argv);
+typedef void (*wios_ntdll_set_main_probe_stage_fn)(uint32_t stage);
 
 static wios_ntdll_set_bridge_fn ntdll_set_server_call_bridge;
+static wios_ntdll_set_main_probe_stage_fn ntdll_set_main_probe_stage;
 
 static void set_error(const char *text)
 {
@@ -263,9 +268,9 @@ static int probe_ntdll_server_call_bridge(const wios_runtime_config *config)
     request->handle = 0;
 
     /*
-     * This enters Wine's real ntdll wine_server_call() first.  The iOS bridge
+     * This enters Wine's real ntdll wine_server_call() first. The iOS bridge
      * then replaces only the Unix fd transport, forwards the protocol frame to
-     * Arcadia's server thread, and returns the real req_close_handle result.
+     * the in-process server thread, and returns the real req_close_handle result.
      */
     status = probe_call(&request_info);
 
@@ -292,6 +297,70 @@ static int probe_ntdll_server_call_bridge(const wios_runtime_config *config)
     runtime_log(config, "NTDLL_WINE_SERVER_CALL=PASS");
     runtime_log(config, "NTDLL_INPROC_SERVER_PATH=PASS");
     runtime_log(config, "NTDLL_UNIX_FD_TRANSPORT=BYPASSED_FOR_PROBE");
+    return 0;
+}
+
+static int probe_wine_main_entry(const wios_runtime_config *config)
+{
+    const char *dl_error;
+    const char *home;
+    const char *prefix;
+    wios_wine_main_fn wine_main;
+    static char arg0[] = "wine";
+    static char arg1[] = "__wios_main_entry_probe__";
+    static char *argv[] = { arg0, arg1, NULL };
+
+    home = getenv("HOME");
+    if (!home || home[0] != '/')
+    {
+        set_error("Wine main probe requires an absolute HOME path");
+        runtime_log(config, "WINE_MAIN_ENV=FAIL");
+        return -1;
+    }
+
+    prefix = getenv("WINEPREFIX");
+    if (prefix && prefix[0] && prefix[0] != '/')
+    {
+        set_error("Wine main probe refuses a relative WINEPREFIX");
+        runtime_log(config, "WINE_MAIN_ENV=FAIL");
+        return -2;
+    }
+
+    runtime_log(config, "WINE_MAIN_ENV=PASS");
+
+    dlerror();
+    ntdll_set_main_probe_stage = (wios_ntdll_set_main_probe_stage_fn)dlsym(
+        ntdll_handle, "wios_ntdll_set_main_probe_stop_stage");
+    if (!ntdll_set_main_probe_stage)
+    {
+        dl_error = dlerror();
+        set_error(dl_error ? dl_error : "NTDLL Wine main probe symbol missing");
+        runtime_log(config, "WINE_MAIN_PROBE_SYMBOL=FAIL");
+        return -3;
+    }
+
+    runtime_log(config, "WINE_MAIN_PROBE_SYMBOL=PASS");
+
+    if (wios_inproc_server_ping() != 0)
+    {
+        set_error(wios_inproc_server_last_error());
+        runtime_log(config, "WINE_SERVER_ACTIVE=FAIL");
+        return -4;
+    }
+    runtime_log(config, "WINE_SERVER_ACTIVE=PASS");
+
+    wine_main = (wios_wine_main_fn)wine_main_entry;
+    ntdll_set_main_probe_stage(WIOS_MAIN_PROBE_STAGE_PATHS);
+    runtime_log(config, "WINE_MAIN_CALL=BEGIN");
+    wine_main(2, argv);
+    ntdll_set_main_probe_stage(0);
+
+    runtime_log(config, "WINE_MAIN_ENTER=PASS");
+    runtime_log(config, "WINE_MAIN_PATH_INIT=PASS");
+    runtime_log(config, "WINE_MAIN_STOP_AFTER=PATHS");
+    runtime_log(config, "WINE_PREFIX_INIT=NOT_RUN");
+    runtime_log(config, "WINDOWS_LOADER_INIT=NOT_RUN");
+    runtime_log(config, "WINDOWS_ARM64_HELLO=NOT_RUN");
     return 0;
 }
 
@@ -408,6 +477,12 @@ static int runtime_initialize(const wios_runtime_config *config)
         return -12;
     }
 
+    if (probe_wine_main_entry(config) != 0)
+    {
+        wios_inproc_server_stop();
+        return -13;
+    }
+
     runtime_log(config, "HOST_RUNTIME_ARCHITECTURE=IN_PROCESS");
     return 0;
 }
@@ -425,6 +500,12 @@ static int runtime_run_arm64_pe(const char *path_utf8,
 
 static void runtime_shutdown(void)
 {
+    if (ntdll_set_main_probe_stage)
+    {
+        ntdll_set_main_probe_stage(0);
+        ntdll_set_main_probe_stage = NULL;
+    }
+
     if (ntdll_set_server_call_bridge)
     {
         ntdll_set_server_call_bridge(NULL);
