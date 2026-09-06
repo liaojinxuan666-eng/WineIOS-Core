@@ -160,7 +160,8 @@ probe_step package-ios-runtime
 bash "$PROJECT_ROOT/scripts/wine-ios-runtime-probe.sh"
 
 probe_step build-runtime-host
-bash "$PROJECT_ROOT/scripts/build-host.sh"
+bash "$PROJECT_ROOT/scripts/build-host.sh" \
+    2>&1 | tee "$LOG_ROOT/wine-ios-runtime-host-build.log"
 
 probe_step package-runtime-host
 bash "$PROJECT_ROOT/scripts/package-ipa.sh"
