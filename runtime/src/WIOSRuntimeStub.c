@@ -7,6 +7,7 @@
 #include <spawn.h>
 #include <stdio.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -26,6 +27,14 @@ static void runtime_log(const wios_runtime_config *config, const char *line)
         config->log_callback(config->log_context, line);
 }
 
+static void runtime_log_mode(const wios_runtime_config *config,
+                             const char *key, mode_t mode)
+{
+    char line[128];
+    snprintf(line, sizeof(line), "%s=%04o", key, (unsigned int)(mode & 07777));
+    runtime_log(config, line);
+}
+
 static int make_path(char *buffer, size_t buffer_size,
                      const char *root, const char *relative)
 {
@@ -36,40 +45,59 @@ static int make_path(char *buffer, size_t buffer_size,
 static int verify_runtime_layout(const wios_runtime_config *config,
                                  const char *runtime_root)
 {
-    static const struct
-    {
-        const char *relative;
-        int mode;
-    } required[] = {
-        { "loader/wine", X_OK },
-        { "server/wineserver", X_OK },
-        { "dlls/ntdll/ntdll.so", R_OK },
-        { "dlls/ntdll/aarch64-windows/ntdll.dll", R_OK },
-        { "dlls/kernelbase/aarch64-windows/kernelbase.dll", R_OK },
-        { "dlls/kernel32/aarch64-windows/kernel32.dll", R_OK },
-        { "hello/hello.exe", R_OK }
+    static const char *required[] = {
+        "loader/wine",
+        "server/wineserver",
+        "dlls/ntdll/ntdll.so",
+        "dlls/ntdll/aarch64-windows/ntdll.dll",
+        "dlls/kernelbase/aarch64-windows/kernelbase.dll",
+        "dlls/kernel32/aarch64-windows/kernel32.dll",
+        "hello/hello.exe"
     };
 
     char path[4096];
+    struct stat st;
     size_t i;
 
+    /*
+     * Do not use access(path, X_OK) here.
+     *
+     * On iOS an app may receive EPERM from access(X_OK) for a nested signed
+     * Mach-O even though the file is present. The real execution capability
+     * is tested separately with posix_spawn(), which gives us the result that
+     * actually matters.
+     */
     for (i = 0; i < sizeof(required) / sizeof(required[0]); ++i)
     {
-        if (!make_path(path, sizeof(path), runtime_root, required[i].relative))
+        if (!make_path(path, sizeof(path), runtime_root, required[i]))
         {
             set_error("runtime path is too long");
             runtime_log(config, "WINE_RUNTIME_LAYOUT=FAIL");
             return -1;
         }
 
-        if (access(path, required[i].mode) != 0)
+        errno = 0;
+        if (stat(path, &st) != 0)
         {
             snprintf(error_buffer, sizeof(error_buffer),
-                     "runtime file unavailable: %s (errno=%d: %s)",
-                     required[i].relative, errno, strerror(errno));
+                     "runtime file missing: %s (errno=%d: %s)",
+                     required[i], errno, strerror(errno));
             runtime_log(config, "WINE_RUNTIME_LAYOUT=FAIL");
             return -1;
         }
+
+        if (!S_ISREG(st.st_mode))
+        {
+            snprintf(error_buffer, sizeof(error_buffer),
+                     "runtime path is not a regular file: %s", required[i]);
+            runtime_log(config, "WINE_RUNTIME_LAYOUT=FAIL");
+            return -1;
+        }
+
+        if (!strcmp(required[i], "loader/wine"))
+            runtime_log_mode(config, "WINE_LOADER_MODE", st.st_mode);
+        else if (!strcmp(required[i], "server/wineserver"))
+            runtime_log_mode(config, "WINESERVER_MODE", st.st_mode);
     }
 
     runtime_log(config, "WINE_RUNTIME_LAYOUT=PASS");
@@ -123,6 +151,8 @@ static int probe_wineserver_spawn(const wios_runtime_config *config,
         runtime_log(config, "WINESERVER_SPAWN=FAIL");
         return -1;
     }
+
+    runtime_log(config, "WINESERVER_SPAWN=PROCESS_CREATED");
 
     do
     {
