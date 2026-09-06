@@ -1,8 +1,0 @@
-/Applications/Xcode_16.4.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang -target arm64-apple-ios15.0 -isysroot /Applications/Xcode_16.4.app/Contents/Developer/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS18.5.sdk -c -o loader/main.o /Users/runner/work/WineIOS-Core/WineIOS-Core/third_party/wine/loader/main.c -Iloader \
-  -I/Users/runner/work/WineIOS-Core/WineIOS-Core/third_party/wine/loader -Iinclude \
-  -I/Users/runner/work/WineIOS-Core/WineIOS-Core/third_party/wine/include -D__WINESRC__ \
-  -DWINE_UNIX_LIB -fPIE -Wall -pipe -fcf-protection=none -fvisibility=hidden -fno-stack-protector \
-  -fno-strict-aliasing -Wdeclaration-after-statement -Wempty-body -Wignored-qualifiers -Winit-self \
-  -Wpointer-arith -Wstrict-prototypes -Wtype-limits -Wunused-but-set-parameter -Wvla -Wwrite-strings \
-  -D_WINE_IOS_BUILD=1 -Os -fvisibility=hidden -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0
-/Applications/Xcode_16.4.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang -target arm64-apple-ios15.0 -isysroot /Applications/Xcode_16.4.app/Contents/Developer/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS18.5.sdk -o loader/wine loader/main.o -Wl,-dead_strip
