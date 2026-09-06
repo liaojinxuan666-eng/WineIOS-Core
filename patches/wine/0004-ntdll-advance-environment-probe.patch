@@ -1,0 +1,19 @@
+diff --git a/dlls/ntdll/unix/env.c b/dlls/ntdll/unix/env.c
+index 3f03656..ae4a803 100644
+--- a/dlls/ntdll/unix/env.c
++++ b/dlls/ntdll/unix/env.c
+@@ -13,6 +13,14 @@ void init_environment(void)
+         !strcmp( getenv( "WIOS_ENV_PROBE" ), "codepage" )) return;
+ #endif
+     init_locale();
++#if defined(__APPLE__) && defined(__MACH__)
++    /*
++     * Stage the environment probe one boundary at a time.  "locale"
++     * proves init_locale() returned without entering the case-table load.
++     */
++    if (getenv( "WIOS_ENV_PROBE" ) &&
++        !strcmp( getenv( "WIOS_ENV_PROBE" ), "locale" )) return;
++#endif
+ 
+     if ((case_table = read_nls_file( "l_intl.nls" )))
+     {

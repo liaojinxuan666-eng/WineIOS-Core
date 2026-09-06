@@ -1,3 +1,4 @@
 0001-configure-add-ios-platform-target.patch
 0002-ntdll-add-inprocess-server-call-bridge.patch
 0003-ntdll-add-main-init-probe.patch
+0004-ntdll-advance-environment-probe.patch

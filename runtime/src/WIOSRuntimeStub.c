@@ -14,7 +14,7 @@
 #define WIOS_STATUS_INVALID_HANDLE 0xC0000008u
 #define WIOS_MAIN_PROBE_STAGE_PATHS 1u
 #define WIOS_MAIN_PROBE_STAGE_VIRTUAL_INIT 2u
-#define WIOS_MAIN_PROBE_STAGE_ENV_CODEPAGE 3u
+#define WIOS_MAIN_PROBE_STAGE_ENVIRONMENT 3u
 
 static void *ntdll_handle;
 static void *wine_main_entry;
@@ -367,7 +367,7 @@ static int probe_wine_main_entry(const wios_runtime_config *config)
     }
     runtime_log(config, "WINE_MAIN_NOEXEC_ENV=PASS");
 
-    if (setenv("WIOS_ENV_PROBE", "codepage", 1) != 0)
+    if (setenv("WIOS_ENV_PROBE", "locale", 1) != 0)
     {
         snprintf(error_buffer, sizeof(error_buffer),
                  "failed to set WIOS_ENV_PROBE (errno=%d: %s)",
@@ -375,10 +375,10 @@ static int probe_wine_main_entry(const wios_runtime_config *config)
         runtime_log(config, "WINE_ENV_PROBE_CONFIG=FAIL");
         return -6;
     }
-    runtime_log(config, "WINE_ENV_PROBE_CONFIG=CODEPAGE");
+    runtime_log(config, "WINE_ENV_PROBE_CONFIG=LOCALE");
 
     wine_main = (wios_wine_main_fn)wine_main_entry;
-    ntdll_set_main_probe_stage(WIOS_MAIN_PROBE_STAGE_ENV_CODEPAGE);
+    ntdll_set_main_probe_stage(WIOS_MAIN_PROBE_STAGE_ENVIRONMENT);
     runtime_log(config, "WINE_MAIN_CALL=BEGIN");
     wine_main(2, argv);
     ntdll_set_main_probe_stage(0);
@@ -388,10 +388,10 @@ static int probe_wine_main_entry(const wios_runtime_config *config)
     runtime_log(config, "WINE_MAIN_PATH_INIT=PASS");
     runtime_log(config, "WINE_VIRTUAL_INIT=PASS");
     runtime_log(config, "WINE_ENV_CODEPAGE=PASS");
-    runtime_log(config, "WINE_ENV_LOCALE=NOT_RUN");
+    runtime_log(config, "WINE_ENV_LOCALE=PASS");
     runtime_log(config, "WINE_ENV_CASE_TABLE=NOT_RUN");
     runtime_log(config, "WINE_ENV_INIT=PARTIAL");
-    runtime_log(config, "WINE_MAIN_STOP_AFTER=ENV_CODEPAGE");
+    runtime_log(config, "WINE_MAIN_STOP_AFTER=ENV_LOCALE");
     runtime_log(config, "WINE_MAIN_THREAD_INIT=NOT_RUN");
     runtime_log(config, "WINE_PREFIX_INIT=NOT_RUN");
     runtime_log(config, "WINDOWS_LOADER_INIT=NOT_RUN");

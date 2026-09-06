@@ -36,6 +36,7 @@ host runtime initialize               PASS
 real __wine_main entry                PASS
 Wine init_paths                       PASS
 Wine virtual_init                     PASS
+Wine init_unix_codepage              PASS
 ```
 
 最近一次真机验证已经形成两条已确认链路。
@@ -77,10 +78,12 @@ init_paths()
    ↓
 virtual_init()
    ↓
+init_unix_codepage()
+   ↓
 probe stop
 ```
 
-当前探针已经验证 `virtual_init()` 完整返回，并在其后主动停止，因此不会误把尚未执行的后续阶段标记为完成。
+当前探针已经验证 `virtual_init()` 与 `init_unix_codepage()` 完整返回。环境初始化仍按子阶段推进，尚未把整个 `init_environment()` 标记为 PASS。
 
 ## 尚未完成
 
@@ -121,6 +124,7 @@ WineIOS-Core/
 │   ├── 0001-...             iOS platform/configure bring-up
 │   ├── 0002-...             ntdll in-process server-call bridge
 │   ├── 0003-...             Wine main initialization probe
+│   ├── 0004-...             environment 子阶段探针
 │   └── series               补丁应用顺序
 ├── runtime/
 │   ├── include/             Host ↔ runtime C ABI
@@ -153,7 +157,7 @@ CI 成功只证明构建链成立。真正的运行状态必须以 iPhone 真机
 
 ## 下一道门
 
-下一阶段只推进 `init_environment()` 内部的第一个子阶段 `init_unix_codepage()`，仍然不启动 `hello.exe`。
+下一阶段只推进 `init_environment()` 内部的 `init_locale()`，仍然不进入 NLS case-table 初始化，也不启动 `hello.exe`。
 
 目标探针：
 
@@ -161,8 +165,8 @@ CI 成功只证明构建链成立。真正的运行状态必须以 iPhone 真机
 WINE_MAIN_ENTER=PASS
 WINE_MAIN_PATH_INIT=PASS
 WINE_VIRTUAL_INIT=PASS
-WINE_ENV_CODEPAGE=PASS / device crash before return
-WINE_ENV_LOCALE=NOT_RUN
+WINE_ENV_CODEPAGE=PASS
+WINE_ENV_LOCALE=PASS / device crash before return
 WINE_ENV_CASE_TABLE=NOT_RUN
 WINE_ENV_INIT=PARTIAL
 WINE_MAIN_THREAD_INIT=NOT_RUN
