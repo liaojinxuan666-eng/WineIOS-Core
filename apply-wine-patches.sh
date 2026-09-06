@@ -1,8 +1,19 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -eo pipefail
 
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-PROJECT_ROOT=$(CDPATH= cd -- "$SCRIPT_DIR" && pwd)
+
+# This file is kept at the repository root, but CI copies it into scripts/
+# before execution. Resolve the repository root correctly in both locations.
+if [[ -f "$SCRIPT_DIR/patches/wine/series" ]]; then
+    PROJECT_ROOT="$SCRIPT_DIR"
+elif [[ -f "$SCRIPT_DIR/../patches/wine/series" ]]; then
+    PROJECT_ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)
+else
+    echo "Unable to locate patches/wine/series from: $SCRIPT_DIR" >&2
+    exit 1
+fi
+
 WINE_SOURCE=${1:-"$PROJECT_ROOT/third_party/wine"}
 SERIES_FILE="$PROJECT_ROOT/patches/wine/series"
 
@@ -24,6 +35,11 @@ while IFS= read -r patch_name || [[ -n "$patch_name" ]]; do
     PATCHES+=("$patch_name")
 done < "$SERIES_FILE"
 
+if [[ ${#PATCHES[@]} -eq 0 ]]; then
+    echo "Patch series is empty: $SERIES_FILE" >&2
+    exit 1
+fi
+
 APPLIED=()
 
 resolve_patch_path()
@@ -33,11 +49,13 @@ resolve_patch_path()
     local canonical_path="$PROJECT_ROOT/patches/wine/$patch_name"
 
     # Working Copy may import replacement files at the repository root.
-    # Prefer that exact-name override when present, without modifying Wine.
     if [[ -f "$root_override" ]]; then
         printf '%s\n' "$root_override"
-    else
+    elif [[ -f "$canonical_path" ]]; then
         printf '%s\n' "$canonical_path"
+    else
+        echo "Patch file is missing: $patch_name" >&2
+        return 1
     fi
 }
 
@@ -52,9 +70,7 @@ rollback()
 
 trap 'rollback' ERR INT TERM
 
-# Validate and apply in series order.  A later patch is allowed to depend on
-# changes made by an earlier patch.  Checking the entire series against the
-# pristine tree would incorrectly reject such dependent patches.
+# Validate and apply in series order so later patches may depend on earlier ones.
 for patch_name in "${PATCHES[@]}"; do
     patch_path=$(resolve_patch_path "$patch_name")
     git -C "$WINE_SOURCE" apply --check "$patch_path"
