@@ -9,21 +9,47 @@ SDK_PATH=$(xcrun --sdk iphoneos --show-sdk-path)
 CLANG=$(xcrun --sdk iphoneos --find clang)
 CLANGXX=$(xcrun --sdk iphoneos --find clang++)
 BUILD_ROOT="$PROJECT_ROOT/build"
+WINE_BUILD="$BUILD_ROOT/wine-ios-arm64"
 OBJECT_ROOT="$BUILD_ROOT/objects"
 APP_ROOT="$BUILD_ROOT/WineIOSHost.app"
 SOURCE_ROOT="$PROJECT_ROOT/host/WineIOSHost/Sources"
 RESOURCE_ROOT="$PROJECT_ROOT/host/WineIOSHost/Resources"
 RUNTIME_SOURCE="$PROJECT_ROOT/runtime/src/WIOSRuntimeStub.c"
-NTDLL_SO="$BUILD_ROOT/wine-ios-arm64/dlls/ntdll/ntdll.so"
+RUNTIME_ROOT="$APP_ROOT/Frameworks/WineRuntime"
+LAYOUT_LOG="$BUILD_ROOT/logs/wine-ios-runtime-host-layout.log"
 
-if [ ! -f "$NTDLL_SO" ]; then
-    echo "Missing Wine iOS ntdll.so: $NTDLL_SO" >&2
-    echo "Run the Wine iOS core probe first." >&2
-    exit 1
-fi
+WINE_LOADER="$WINE_BUILD/loader/wine"
+WINESERVER="$WINE_BUILD/server/wineserver"
+NTDLL_SO="$WINE_BUILD/dlls/ntdll/ntdll.so"
+NTDLL_DLL="$WINE_BUILD/dlls/ntdll/aarch64-windows/ntdll.dll"
+KERNELBASE_DLL="$WINE_BUILD/dlls/kernelbase/aarch64-windows/kernelbase.dll"
+KERNEL32_DLL="$WINE_BUILD/dlls/kernel32/aarch64-windows/kernel32.dll"
+HELLO_EXE="$WINE_BUILD/hello/hello.exe"
+
+require_file()
+{
+    if [ ! -f "$1" ]; then
+        echo "Missing required runtime file: $1" >&2
+        exit 1
+    fi
+}
+
+require_file "$WINE_LOADER"
+require_file "$WINESERVER"
+require_file "$NTDLL_SO"
+require_file "$NTDLL_DLL"
+require_file "$KERNELBASE_DLL"
+require_file "$KERNEL32_DLL"
+require_file "$HELLO_EXE"
 
 rm -rf "$OBJECT_ROOT" "$APP_ROOT"
-mkdir -p "$OBJECT_ROOT" "$APP_ROOT/Frameworks"
+mkdir -p "$OBJECT_ROOT"
+mkdir -p "$RUNTIME_ROOT/loader"
+mkdir -p "$RUNTIME_ROOT/server"
+mkdir -p "$RUNTIME_ROOT/dlls/ntdll/aarch64-windows"
+mkdir -p "$RUNTIME_ROOT/dlls/kernelbase/aarch64-windows"
+mkdir -p "$RUNTIME_ROOT/dlls/kernel32/aarch64-windows"
+mkdir -p "$RUNTIME_ROOT/hello"
 
 COMMON_FLAGS="-arch arm64 -isysroot $SDK_PATH -miphoneos-version-min=$WIOS_MIN_IOS -fobjc-arc -fmodules -Os"
 
@@ -57,16 +83,46 @@ sed \
     -e "s/\$(WIOS_MIN_IOS)/$WIOS_MIN_IOS/g" \
     "$RESOURCE_ROOT/Info.plist" > "$APP_ROOT/Info.plist"
 
-cp -p "$NTDLL_SO" "$APP_ROOT/Frameworks/ntdll.so"
+# Preserve Wine's build-tree-relative layout inside the application bundle.
+cp -p "$WINE_LOADER" "$RUNTIME_ROOT/loader/wine"
+cp -p "$WINESERVER" "$RUNTIME_ROOT/server/wineserver"
+cp -p "$NTDLL_SO" "$RUNTIME_ROOT/dlls/ntdll/ntdll.so"
+cp -p "$NTDLL_DLL" "$RUNTIME_ROOT/dlls/ntdll/aarch64-windows/ntdll.dll"
+cp -p "$KERNELBASE_DLL" "$RUNTIME_ROOT/dlls/kernelbase/aarch64-windows/kernelbase.dll"
+cp -p "$KERNEL32_DLL" "$RUNTIME_ROOT/dlls/kernel32/aarch64-windows/kernel32.dll"
+cp -p "$HELLO_EXE" "$RUNTIME_ROOT/hello/hello.exe"
+
+chmod 755 "$RUNTIME_ROOT/loader/wine"
+chmod 755 "$RUNTIME_ROOT/server/wineserver"
 
 plutil -lint "$APP_ROOT/Info.plist"
 
-# Nested executable code must be signed before the outer application.
-codesign --force --sign - --timestamp=none "$APP_ROOT/Frameworks/ntdll.so"
+mkdir -p "$BUILD_ROOT/logs"
+{
+    echo "WINE_RUNTIME_LAYOUT=BEGIN"
+    find "$RUNTIME_ROOT" -type f | LC_ALL=C sort | sed "s#^$RUNTIME_ROOT/##"
+    echo "WINE_RUNTIME_LAYOUT=END"
+    file "$RUNTIME_ROOT/loader/wine"
+    file "$RUNTIME_ROOT/server/wineserver"
+    file "$RUNTIME_ROOT/dlls/ntdll/ntdll.so"
+    file "$RUNTIME_ROOT/hello/hello.exe"
+} > "$LAYOUT_LOG"
+
+# Sign nested native Mach-O code before signing the outer application.
+codesign --force --sign - --timestamp=none \
+    --entitlements "$RESOURCE_ROOT/Entitlements.plist" \
+    "$RUNTIME_ROOT/loader/wine"
+codesign --force --sign - --timestamp=none \
+    --entitlements "$RESOURCE_ROOT/Entitlements.plist" \
+    "$RUNTIME_ROOT/server/wineserver"
+codesign --force --sign - --timestamp=none \
+    "$RUNTIME_ROOT/dlls/ntdll/ntdll.so"
+
 codesign --force --sign - --timestamp=none \
     --entitlements "$RESOURCE_ROOT/Entitlements.plist" "$APP_ROOT"
 
 codesign --verify --deep --strict "$APP_ROOT"
 
 echo "Built $APP_ROOT"
-echo "Bundled Wine runtime: $APP_ROOT/Frameworks/ntdll.so"
+echo "Bundled Wine runtime root: $RUNTIME_ROOT"
+echo "Runtime layout log: $LAYOUT_LOG"
