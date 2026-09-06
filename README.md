@@ -1,8 +1,10 @@
-# Arcadia Wine Core 0.0.1
+# WineIOS-Core
 
-Arcadia Wine Core 是 Arcadia 当前的 Windows 兼容运行核心实验仓库。现阶段目标不是扩展启动器或 UI，而是先把 **Wine 11.0 → iOS ARM64 → Windows ARM64 PE** 的最小运行链路做成可重复、可验证的基础。
+`WineIOS-Core` 是一个面向 iOS ARM64 的 Wine 核心 bring-up 与验证仓库。
 
-当前版本仍为 `0.0.1`。版本号不会因为单个探针通过就快速上调；只有跨过明确的核心里程碑后才会升级。
+当前阶段的目标不是做完整启动器或产品 UI，而是先把 **Wine 11.0 → iOS ARM64 → Windows ARM64 PE** 的最小运行链路做成可重复、可验证的基础。
+
+当前版本仍为 `0.0.1`。只有跨过明确的核心里程碑后才会升级版本号。
 
 ## 当前状态
 
@@ -38,7 +40,7 @@ host runtime initialize               PASS
 ```text
 iOS Host
    ↓
-Arcadia Wine Runtime ABI
+Wine Runtime ABI
    ↓
 Wine ntdll Unix runtime
    ↓
@@ -65,13 +67,11 @@ full Wine initialization              NOT RUN
 Wine prefix initialization            NOT RUN
 Windows PE loader startup             NOT RUN
 Windows ARM64 hello.exe execution     NOT RUN
-DX11 / DX12 graphics                  NOT IMPLEMENTED
-AlloyCore graphics path               NOT IMPLEMENTED
-Steam / Epic integration              NOT IMPLEMENTED
+graphics backend                      NOT IMPLEMENTED
 JIT / x64 execution                   NOT CURRENT PRIORITY
 ```
 
-目前的重点仍然是 ARM64 Wine 核心本身，不把 JIT、图形、启动器等内容提前混进运行时 bring-up。
+目前的重点仍然是 ARM64 Wine 核心本身，不把图形、启动器等内容提前混进运行时 bring-up。
 
 ## 已冻结的 Wine 基线
 
@@ -114,7 +114,7 @@ WineIOS-Core/
 5. 构建必要的 Windows ARM64 PE 核心；
 6. 构建 iOS Wine loader / ntdll / wineserver；
 7. 打包真机 runtime artifact；
-8. 构建 Arcadia Wine Core iOS Host。
+8. 构建 Wine iOS Core Host。
 
 CI 成功只证明构建链成立。真正的运行状态必须以 iPhone 真机日志为准。
 
