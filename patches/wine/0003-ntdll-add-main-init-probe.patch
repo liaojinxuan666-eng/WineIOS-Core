@@ -4,7 +4,7 @@ index d4c109b..7206240 100644
 +++ b/dlls/ntdll/unix/env.c
 @@ -826,6 +826,15 @@ void init_environment(void)
      USHORT *case_table;
- 
+
      init_unix_codepage();
 +#if defined(__APPLE__) && defined(__MACH__)
 +    /*
@@ -16,7 +16,7 @@ index d4c109b..7206240 100644
 +        !strcmp( getenv( "WIOS_ENV_PROBE" ), "codepage" )) return;
 +#endif
      init_locale();
- 
+
      if ((case_table = read_nls_file( "l_intl.nls" )))
 diff --git a/dlls/ntdll/unix/loader.c b/dlls/ntdll/unix/loader.c
 index d081bfd..75e9a2b 100644
@@ -25,7 +25,7 @@ index d081bfd..75e9a2b 100644
 @@ -193,6 +193,16 @@ const char **system_dll_paths = NULL;
  const char *user_name = NULL;
  SECTION_IMAGE_INFORMATION main_image_info = { NULL };
- 
+
 +#if defined(__APPLE__) && defined(__MACH__)
 +static unsigned int wios_main_probe_stop_stage;
 +
@@ -41,7 +41,7 @@ index d081bfd..75e9a2b 100644
  {
 @@ -2281,6 +2291,11 @@ DECLSPEC_EXPORT void __wine_main( int argc, char *argv[] )
      main_argv = argv;
- 
+
      init_paths();
 +#if defined(__APPLE__) && defined(__MACH__)
 +    /* Stage 1 proves the real __wine_main entry and path setup. */
@@ -50,10 +50,8 @@ index d081bfd..75e9a2b 100644
 +
      if (!getenv( "WINELOADERNOEXEC" ) || argc <= 1) check_command_line( argc, argv );
      unsetenv( "WINELOADERNOEXEC" );
- 
-@@ -2295,7 +2310,17 @@ DECLSPEC_EXPORT void __wine_main( int argc, char *argv[] )
- #endif
- 
+
+@@ -2297,3 +2312,13 @@ DECLSPEC_EXPORT void __wine_main( int argc, char *argv[] )
      virtual_init();
 +#if defined(__APPLE__) && defined(__MACH__)
 +    /* Stage 2 proves Wine virtual address-space initialization. */
@@ -66,6 +64,4 @@ index d081bfd..75e9a2b 100644
 +    if (wios_main_probe_stop_stage == 3) return;
 +#endif
 +
- 
- #ifdef __APPLE__
-     apple_main_thread();
+
