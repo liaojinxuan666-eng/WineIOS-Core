@@ -1,0 +1,45 @@
+diff --git a/dlls/ntdll/unix/virtual.c b/dlls/ntdll/unix/virtual.c
+index 96676de..c98d09a 100644
+--- a/dlls/ntdll/unix/virtual.c
++++ b/dlls/ntdll/unix/virtual.c
+@@ -4032,6 +4032,24 @@ static void reserve_area( void *addr, void *end )
+ }
+ 
+ 
++#if defined(__APPLE__) && defined(__MACH__) && defined(WINE_IOS)
++static unsigned int wios_first_teb_shared_data_probe_reached;
++static unsigned int wios_first_teb_shared_data_probe_status;
++
++__attribute__((visibility("default")))
++unsigned int wios_ntdll_get_first_teb_shared_data_probe_reached(void)
++{
++    return wios_first_teb_shared_data_probe_reached;
++}
++
++__attribute__((visibility("default")))
++unsigned int wios_ntdll_get_first_teb_shared_data_probe_status(void)
++{
++    return wios_first_teb_shared_data_probe_status;
++}
++#endif
++
++
+ /***********************************************************************
+  *           virtual_alloc_first_teb
+  */
+@@ -4047,6 +4065,15 @@ TEB *virtual_alloc_first_teb(void)
+     /* reserve space for shared user data */
+     status = NtAllocateVirtualMemory( NtCurrentProcess(), (void **)&user_shared_data, 0, &data_size,
+                                       MEM_RESERVE | MEM_COMMIT, PAGE_READONLY );
++#if defined(__APPLE__) && defined(__MACH__) && defined(WINE_IOS)
++    if (getenv( "WIOS_FIRST_TEB_PROBE" ) &&
++        !strcmp( getenv( "WIOS_FIRST_TEB_PROBE" ), "shared_user_data" ))
++    {
++        wios_first_teb_shared_data_probe_reached = 1;
++        wios_first_teb_shared_data_probe_status = status;
++        return NULL;
++    }
++#endif
+     if (status)
+     {
+         ERR( "wine: failed to map the shared user data: %08x\n", status );

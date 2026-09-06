@@ -32,6 +32,7 @@ typedef void (*wios_wine_main_fn)(int argc, char **argv);
 typedef void (*wios_ntdll_set_main_probe_stage_fn)(uint32_t stage);
 typedef uint32_t (*wios_ntdll_get_environment_probe_state_fn)(void);
 typedef uint32_t (*wios_ntdll_get_main_probe_result_stage_fn)(void);
+typedef uint32_t (*wios_ntdll_get_first_teb_probe_u32_fn)(void);
 
 static wios_ntdll_set_bridge_fn ntdll_set_server_call_bridge;
 static wios_ntdll_set_main_probe_stage_fn ntdll_set_main_probe_stage;
@@ -317,8 +318,11 @@ static int probe_wine_main_entry(const wios_runtime_config *config)
     wios_wine_main_fn wine_main;
     wios_ntdll_get_environment_probe_state_fn get_environment_probe_state;
     wios_ntdll_get_main_probe_result_stage_fn get_main_probe_result_stage;
+    wios_ntdll_get_first_teb_probe_u32_fn get_first_teb_shared_data_probe_reached;
+    wios_ntdll_get_first_teb_probe_u32_fn get_first_teb_shared_data_probe_status;
     uint32_t environment_probe_state;
-    uint32_t main_probe_result_stage;
+    uint32_t first_teb_shared_data_reached;
+    uint32_t first_teb_shared_data_status;
     static char arg0[] = "wine";
     static char arg1[] = "__wios_main_entry_probe__";
     static char *argv[] = { arg0, arg1, NULL };
@@ -414,12 +418,39 @@ static int probe_wine_main_entry(const wios_runtime_config *config)
     }
     runtime_log(config, "WINE_MAIN_PROBE_RESULT_SYMBOL=PASS");
 
+    dlerror();
+    get_first_teb_shared_data_probe_reached = (wios_ntdll_get_first_teb_probe_u32_fn)dlsym(
+        ntdll_handle, "wios_ntdll_get_first_teb_shared_data_probe_reached");
+    get_first_teb_shared_data_probe_status = (wios_ntdll_get_first_teb_probe_u32_fn)dlsym(
+        ntdll_handle, "wios_ntdll_get_first_teb_shared_data_probe_status");
+    if (!get_first_teb_shared_data_probe_reached || !get_first_teb_shared_data_probe_status)
+    {
+        dl_error = dlerror();
+        set_error(dl_error ? dl_error : "NTDLL first-TEB shared-data probe symbol missing");
+        runtime_log(config, "WINE_FIRST_TEB_SHARED_DATA_PROBE_SYMBOLS=FAIL");
+        unsetenv("WIOS_ENV_PROBE");
+        return -9;
+    }
+    runtime_log(config, "WINE_FIRST_TEB_SHARED_DATA_PROBE_SYMBOLS=PASS");
+
+    if (setenv("WIOS_FIRST_TEB_PROBE", "shared_user_data", 1) != 0)
+    {
+        snprintf(error_buffer, sizeof(error_buffer),
+                 "failed to set WIOS_FIRST_TEB_PROBE (errno=%d: %s)",
+                 errno, strerror(errno));
+        runtime_log(config, "WINE_FIRST_TEB_PROBE_CONFIG=FAIL");
+        unsetenv("WIOS_ENV_PROBE");
+        return -10;
+    }
+    runtime_log(config, "WINE_FIRST_TEB_PROBE_CONFIG=SHARED_USER_DATA");
+
     wine_main = (wios_wine_main_fn)wine_main_entry;
     ntdll_set_main_probe_stage(WIOS_MAIN_PROBE_STAGE_FIRST_TEB);
     runtime_log(config, "WINE_MAIN_CALL=BEGIN");
     wine_main(2, argv);
     ntdll_set_main_probe_stage(0);
     unsetenv("WIOS_ENV_PROBE");
+    unsetenv("WIOS_FIRST_TEB_PROBE");
 
     runtime_log(config, "WINE_MAIN_ENTER=PASS");
     runtime_log(config, "WINE_MAIN_PATH_INIT=PASS");
@@ -435,29 +466,53 @@ static int probe_wine_main_entry(const wios_runtime_config *config)
                  (unsigned int)environment_probe_state);
         runtime_log(config, "WINE_ENV_CASE_TABLE=FAIL");
         runtime_log(config, "WINE_ENV_INIT=FAIL");
-        return -9;
+        return -11;
     }
 
     runtime_log(config, "WINE_ENV_CASE_TABLE=PASS");
     runtime_log(config, "WINE_ENV_INIT=PASS");
     runtime_log(config, "WINE_IOS_MAIN_THREAD_BOUNDARY=PASS");
     runtime_log(config, "WINE_APPLE_MAIN_THREAD=SKIPPED_IOS_HOST");
+    runtime_log(config, "WINE_MAIN_THREAD_ENTER=PASS");
 
-    main_probe_result_stage = get_main_probe_result_stage();
-    if (main_probe_result_stage != WIOS_MAIN_PROBE_STAGE_FIRST_TEB)
+    first_teb_shared_data_reached = get_first_teb_shared_data_probe_reached();
+    if (first_teb_shared_data_reached != 1u)
     {
-        snprintf(error_buffer, sizeof(error_buffer),
-                 "Wine first TEB probe did not complete (stage=%u)",
-                 (unsigned int)main_probe_result_stage);
+        set_error("Wine first TEB shared-user-data probe was not reached");
+        runtime_log(config, "WINE_FIRST_TEB_SHARED_DATA_CALL=FAIL");
         runtime_log(config, "WINE_MAIN_THREAD_FIRST_TEB=FAIL");
         runtime_log(config, "WINE_MAIN_THREAD_INIT=FAIL");
-        return -10;
+        return -12;
+    }
+    runtime_log(config, "WINE_FIRST_TEB_SHARED_DATA_CALL=PASS");
+
+    first_teb_shared_data_status = get_first_teb_shared_data_probe_status();
+    {
+        char line[128];
+        snprintf(line, sizeof(line),
+                 "WINE_FIRST_TEB_SHARED_DATA_STATUS=0x%08X",
+                 (unsigned int)first_teb_shared_data_status);
+        runtime_log(config, line);
     }
 
-    runtime_log(config, "WINE_MAIN_THREAD_ENTER=PASS");
-    runtime_log(config, "WINE_MAIN_THREAD_FIRST_TEB=PASS");
+    if (first_teb_shared_data_status != 0u)
+    {
+        snprintf(error_buffer, sizeof(error_buffer),
+                 "Wine shared user data allocation failed with 0x%08X",
+                 (unsigned int)first_teb_shared_data_status);
+        runtime_log(config, "WINE_FIRST_TEB_SHARED_DATA_ALLOC=FAIL");
+        runtime_log(config, "WINE_MAIN_THREAD_FIRST_TEB=BLOCKED");
+        runtime_log(config, "WINE_MAIN_THREAD_INIT=FAIL");
+        return -13;
+    }
+
+    runtime_log(config, "WINE_FIRST_TEB_SHARED_DATA_ALLOC=PASS");
+    runtime_log(config, "WINE_MAIN_THREAD_FIRST_TEB=PARTIAL");
     runtime_log(config, "WINE_MAIN_THREAD_INIT=PARTIAL");
-    runtime_log(config, "WINE_MAIN_STOP_AFTER=FIRST_TEB");
+    runtime_log(config, "WINE_MAIN_STOP_AFTER=FIRST_TEB_SHARED_USER_DATA");
+    runtime_log(config, "WINE_TEB_BLOCK_RESERVE=NOT_RUN");
+    runtime_log(config, "WINE_TEB_BLOCK_COMMIT=NOT_RUN");
+    runtime_log(config, "WINE_TEB_INIT=NOT_RUN");
     runtime_log(config, "WINE_SIGNAL_INIT_THREADING=NOT_RUN");
     runtime_log(config, "WINE_SERVER_INIT_PROCESS=NOT_RUN");
     runtime_log(config, "WINE_PREFIX_INIT=NOT_RUN");
