@@ -1,8 +1,8 @@
 diff --git a/dlls/ntdll/unix/env.c b/dlls/ntdll/unix/env.c
-index 3f03656..f6dc123 100644
+index 666f2b1..1fbb00b 100644
 --- a/dlls/ntdll/unix/env.c
 +++ b/dlls/ntdll/unix/env.c
-@@ -13,10 +13,27 @@ void init_environment(void)
+@@ -836,13 +836,30 @@ void init_environment(void)
          !strcmp( getenv( "WIOS_ENV_PROBE" ), "codepage" )) return;
  #endif
      init_locale();
@@ -30,3 +30,6 @@ index 3f03656..f6dc123 100644
 +    return (uctable && lctable) ? 1u : 0u;
  }
 +#endif
+ 
+ 
+ /* check if a WINE_HOST_ prefixed variable already exists in the environment */
