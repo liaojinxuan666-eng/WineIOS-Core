@@ -1,15 +1,11 @@
 #include "WIOSRuntimeABI.h"
+#include "WIOSInProcessServer.h"
 
-#include <crt_externs.h>
 #include <dlfcn.h>
 #include <errno.h>
-#include <fcntl.h>
-#include <spawn.h>
 #include <stdio.h>
 #include <string.h>
 #include <sys/stat.h>
-#include <sys/wait.h>
-#include <unistd.h>
 
 static void *ntdll_handle;
 static void *wine_main_entry;
@@ -27,14 +23,6 @@ static void runtime_log(const wios_runtime_config *config, const char *line)
         config->log_callback(config->log_context, line);
 }
 
-static void runtime_log_mode(const wios_runtime_config *config,
-                             const char *key, mode_t mode)
-{
-    char line[128];
-    snprintf(line, sizeof(line), "%s=%04o", key, (unsigned int)(mode & 07777));
-    runtime_log(config, line);
-}
-
 static int make_path(char *buffer, size_t buffer_size,
                      const char *root, const char *relative)
 {
@@ -46,8 +34,6 @@ static int verify_runtime_layout(const wios_runtime_config *config,
                                  const char *runtime_root)
 {
     static const char *required[] = {
-        "loader/wine",
-        "server/wineserver",
         "dlls/ntdll/ntdll.so",
         "dlls/ntdll/aarch64-windows/ntdll.dll",
         "dlls/kernelbase/aarch64-windows/kernelbase.dll",
@@ -59,14 +45,6 @@ static int verify_runtime_layout(const wios_runtime_config *config,
     struct stat st;
     size_t i;
 
-    /*
-     * Do not use access(path, X_OK) here.
-     *
-     * On iOS an app may receive EPERM from access(X_OK) for a nested signed
-     * Mach-O even though the file is present. The real execution capability
-     * is tested separately with posix_spawn(), which gives us the result that
-     * actually matters.
-     */
     for (i = 0; i < sizeof(required) / sizeof(required[0]); ++i)
     {
         if (!make_path(path, sizeof(path), runtime_root, required[i]))
@@ -93,100 +71,9 @@ static int verify_runtime_layout(const wios_runtime_config *config,
             runtime_log(config, "WINE_RUNTIME_LAYOUT=FAIL");
             return -1;
         }
-
-        if (!strcmp(required[i], "loader/wine"))
-            runtime_log_mode(config, "WINE_LOADER_MODE", st.st_mode);
-        else if (!strcmp(required[i], "server/wineserver"))
-            runtime_log_mode(config, "WINESERVER_MODE", st.st_mode);
     }
 
     runtime_log(config, "WINE_RUNTIME_LAYOUT=PASS");
-    return 0;
-}
-
-static int probe_wineserver_spawn(const wios_runtime_config *config,
-                                  const char *runtime_root)
-{
-    char path[4096];
-    char *argv[3];
-    pid_t pid = -1;
-    int spawn_result;
-    int status = 0;
-    pid_t wait_result;
-    posix_spawn_file_actions_t actions;
-
-    if (!make_path(path, sizeof(path), runtime_root, "server/wineserver"))
-    {
-        set_error("wineserver path is too long");
-        runtime_log(config, "WINESERVER_SPAWN=FAIL");
-        return -1;
-    }
-
-    argv[0] = path;
-    argv[1] = "--version";
-    argv[2] = NULL;
-
-    runtime_log(config, "WINESERVER_SPAWN=START");
-
-    if (posix_spawn_file_actions_init(&actions) != 0)
-    {
-        set_error("posix_spawn_file_actions_init failed");
-        runtime_log(config, "WINESERVER_SPAWN=FAIL");
-        return -1;
-    }
-
-    (void)posix_spawn_file_actions_addopen(&actions, STDOUT_FILENO,
-                                           "/dev/null", O_WRONLY, 0);
-    (void)posix_spawn_file_actions_addopen(&actions, STDERR_FILENO,
-                                           "/dev/null", O_WRONLY, 0);
-
-    spawn_result = posix_spawn(&pid, path, &actions, NULL, argv, *_NSGetEnviron());
-    posix_spawn_file_actions_destroy(&actions);
-
-    if (spawn_result != 0)
-    {
-        snprintf(error_buffer, sizeof(error_buffer),
-                 "posix_spawn wineserver failed: %d (%s)",
-                 spawn_result, strerror(spawn_result));
-        runtime_log(config, "WINESERVER_SPAWN=FAIL");
-        return -1;
-    }
-
-    runtime_log(config, "WINESERVER_SPAWN=PROCESS_CREATED");
-
-    do
-    {
-        wait_result = waitpid(pid, &status, 0);
-    }
-    while (wait_result < 0 && errno == EINTR);
-
-    if (wait_result < 0)
-    {
-        snprintf(error_buffer, sizeof(error_buffer),
-                 "waitpid wineserver failed: errno=%d (%s)",
-                 errno, strerror(errno));
-        runtime_log(config, "WINESERVER_SPAWN=FAIL");
-        return -1;
-    }
-
-    if (!WIFEXITED(status) || WEXITSTATUS(status) != 0)
-    {
-        if (WIFSIGNALED(status))
-        {
-            snprintf(error_buffer, sizeof(error_buffer),
-                     "wineserver terminated by signal %d", WTERMSIG(status));
-        }
-        else
-        {
-            snprintf(error_buffer, sizeof(error_buffer),
-                     "wineserver exited with status %d",
-                     WIFEXITED(status) ? WEXITSTATUS(status) : -1);
-        }
-        runtime_log(config, "WINESERVER_SPAWN=FAIL");
-        return -1;
-    }
-
-    runtime_log(config, "WINESERVER_SPAWN=PASS");
     return 0;
 }
 
@@ -195,6 +82,7 @@ static int runtime_initialize(const wios_runtime_config *config)
     char runtime_root[4096];
     char ntdll_path[4096];
     const char *dl_error;
+    const char *server_error;
 
     error_buffer[0] = '\0';
 
@@ -265,10 +153,30 @@ static int runtime_initialize(const wios_runtime_config *config)
     runtime_log(config, "WINE_MAIN_SYMBOL=PASS");
     runtime_log(config, "WINE_RUNTIME_BUNDLE_PROBE=PASS");
 
-    if (probe_wineserver_spawn(config, runtime_root) != 0)
+    /*
+     * Ordinary iOS sandbox does not allow Arcadia to depend on spawning the
+     * traditional wineserver process.  Phase 1 validates a server thread and
+     * same-process request/reply transport instead.
+     */
+    if (wios_inproc_server_start(config->log_callback, config->log_context) != 0)
+    {
+        server_error = wios_inproc_server_last_error();
+        set_error(server_error && server_error[0] ? server_error :
+                  "in-process server start failed");
         return -8;
+    }
 
-    runtime_log(config, "WINE_RUNTIME_NATIVE_SPAWN_PROBE=PASS");
+    if (wios_inproc_server_ping() != 0)
+    {
+        server_error = wios_inproc_server_last_error();
+        set_error(server_error && server_error[0] ? server_error :
+                  "in-process server roundtrip failed");
+        wios_inproc_server_stop();
+        return -9;
+    }
+
+    runtime_log(config, "INPROC_SERVER_TRANSPORT=PASS");
+    runtime_log(config, "HOST_RUNTIME_ARCHITECTURE=IN_PROCESS");
     return 0;
 }
 
@@ -285,6 +193,8 @@ static int runtime_run_arm64_pe(const char *path_utf8,
 
 static void runtime_shutdown(void)
 {
+    wios_inproc_server_stop();
+
     wine_main_entry = NULL;
     if (ntdll_handle)
     {
