@@ -28,6 +28,7 @@ typedef void (*wios_ntdll_set_bridge_fn)(uint32_t (*bridge)(void *));
 typedef uint32_t (*wios_ntdll_probe_call_fn)(void *);
 typedef void (*wios_wine_main_fn)(int argc, char **argv);
 typedef void (*wios_ntdll_set_main_probe_stage_fn)(uint32_t stage);
+typedef uint32_t (*wios_ntdll_get_environment_probe_state_fn)(void);
 
 static wios_ntdll_set_bridge_fn ntdll_set_server_call_bridge;
 static wios_ntdll_set_main_probe_stage_fn ntdll_set_main_probe_stage;
@@ -60,6 +61,9 @@ static int verify_runtime_layout(const wios_runtime_config *config,
         "dlls/ntdll/aarch64-windows/ntdll.dll",
         "dlls/kernelbase/aarch64-windows/kernelbase.dll",
         "dlls/kernel32/aarch64-windows/kernel32.dll",
+        "nls/normnfc.nls",
+        "nls/locale.nls",
+        "nls/l_intl.nls",
         "hello/hello.exe"
     };
 
@@ -308,6 +312,8 @@ static int probe_wine_main_entry(const wios_runtime_config *config)
     const char *home;
     const char *prefix;
     wios_wine_main_fn wine_main;
+    wios_ntdll_get_environment_probe_state_fn get_environment_probe_state;
+    uint32_t environment_probe_state;
     static char arg0[] = "wine";
     static char arg1[] = "__wios_main_entry_probe__";
     static char *argv[] = { arg0, arg1, NULL };
@@ -367,7 +373,7 @@ static int probe_wine_main_entry(const wios_runtime_config *config)
     }
     runtime_log(config, "WINE_MAIN_NOEXEC_ENV=PASS");
 
-    if (setenv("WIOS_ENV_PROBE", "locale", 1) != 0)
+    if (setenv("WIOS_ENV_PROBE", "case_table", 1) != 0)
     {
         snprintf(error_buffer, sizeof(error_buffer),
                  "failed to set WIOS_ENV_PROBE (errno=%d: %s)",
@@ -375,7 +381,20 @@ static int probe_wine_main_entry(const wios_runtime_config *config)
         runtime_log(config, "WINE_ENV_PROBE_CONFIG=FAIL");
         return -6;
     }
-    runtime_log(config, "WINE_ENV_PROBE_CONFIG=LOCALE");
+    runtime_log(config, "WINE_ENV_PROBE_CONFIG=CASE_TABLE");
+
+    dlerror();
+    get_environment_probe_state = (wios_ntdll_get_environment_probe_state_fn)dlsym(
+        ntdll_handle, "wios_ntdll_get_environment_probe_state");
+    if (!get_environment_probe_state)
+    {
+        dl_error = dlerror();
+        set_error(dl_error ? dl_error : "NTDLL environment probe state symbol missing");
+        runtime_log(config, "WINE_ENV_PROBE_STATE_SYMBOL=FAIL");
+        unsetenv("WIOS_ENV_PROBE");
+        return -7;
+    }
+    runtime_log(config, "WINE_ENV_PROBE_STATE_SYMBOL=PASS");
 
     wine_main = (wios_wine_main_fn)wine_main_entry;
     ntdll_set_main_probe_stage(WIOS_MAIN_PROBE_STAGE_ENVIRONMENT);
@@ -389,9 +408,21 @@ static int probe_wine_main_entry(const wios_runtime_config *config)
     runtime_log(config, "WINE_VIRTUAL_INIT=PASS");
     runtime_log(config, "WINE_ENV_CODEPAGE=PASS");
     runtime_log(config, "WINE_ENV_LOCALE=PASS");
-    runtime_log(config, "WINE_ENV_CASE_TABLE=NOT_RUN");
-    runtime_log(config, "WINE_ENV_INIT=PARTIAL");
-    runtime_log(config, "WINE_MAIN_STOP_AFTER=ENV_LOCALE");
+
+    environment_probe_state = get_environment_probe_state();
+    if (environment_probe_state != 1u)
+    {
+        snprintf(error_buffer, sizeof(error_buffer),
+                 "Wine environment case table was not initialized (state=0x%08X)",
+                 (unsigned int)environment_probe_state);
+        runtime_log(config, "WINE_ENV_CASE_TABLE=FAIL");
+        runtime_log(config, "WINE_ENV_INIT=FAIL");
+        return -8;
+    }
+
+    runtime_log(config, "WINE_ENV_CASE_TABLE=PASS");
+    runtime_log(config, "WINE_ENV_INIT=PASS");
+    runtime_log(config, "WINE_MAIN_STOP_AFTER=ENVIRONMENT");
     runtime_log(config, "WINE_MAIN_THREAD_INIT=NOT_RUN");
     runtime_log(config, "WINE_PREFIX_INIT=NOT_RUN");
     runtime_log(config, "WINDOWS_LOADER_INIT=NOT_RUN");
