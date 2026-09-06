@@ -19,6 +19,7 @@ static char error_buffer[1024];
 
 typedef uint32_t (*wios_core_u32_fn)(void);
 typedef int (*wios_core_bool_fn)(void);
+typedef uint32_t (*wios_core_close_handle_fn)(uint32_t handle);
 
 static void set_error(const char *text)
 {
@@ -96,6 +97,7 @@ static int probe_real_wine_server_core(const wios_runtime_config *config,
     wios_core_u32_fn abi_version;
     wios_core_bool_fn has_close_handle;
     wios_core_u32_fn probe_invalid_close;
+    wios_core_close_handle_fn dispatch_close_handle;
     uint32_t protocol;
     uint32_t abi;
     uint32_t handler_status;
@@ -130,9 +132,11 @@ static int probe_real_wine_server_core(const wios_runtime_config *config,
         wine_server_core_handle, "wios_wine_server_core_has_close_handle");
     probe_invalid_close = (wios_core_u32_fn)dlsym(
         wine_server_core_handle, "wios_wine_server_core_probe_invalid_close");
+    dispatch_close_handle = (wios_core_close_handle_fn)dlsym(
+        wine_server_core_handle, "wios_wine_server_core_dispatch_close_handle");
 
     if (!protocol_version || !abi_version ||
-        !has_close_handle || !probe_invalid_close)
+        !has_close_handle || !probe_invalid_close || !dispatch_close_handle)
     {
         dl_error = dlerror();
         set_error(dl_error ? dl_error : "Wine server core API symbol missing");
@@ -182,11 +186,6 @@ static int probe_real_wine_server_core(const wios_runtime_config *config,
 
     runtime_log(config, "WINE_SERVER_CORE_HANDLER_LINK=PASS");
 
-    /*
-     * First controlled execution of a real Wine server handler.
-     * The adapter supplies a zero-handle synthetic process/thread context.
-     * req_close_handle must therefore execute and return STATUS_INVALID_HANDLE.
-     */
     handler_status = probe_invalid_close();
 
     {
@@ -211,6 +210,16 @@ static int probe_real_wine_server_core(const wios_runtime_config *config,
     runtime_log(config, "WINE_SERVER_CORE_HANDLER_CONTEXT=PASS");
     runtime_log(config, "WINE_SERVER_CORE_HANDLER_EXECUTION=PASS");
     runtime_log(config, "WINE_SERVER_CORE_HANDLER_RESULT=PASS");
+
+    if (wios_inproc_server_attach_close_handle(
+            (wios_close_handle_dispatch)dispatch_close_handle) != 0)
+    {
+        set_error(wios_inproc_server_last_error());
+        runtime_log(config, "WINE_SERVER_CORE_HANDLER_ATTACH=FAIL");
+        return -8;
+    }
+
+    runtime_log(config, "WINE_SERVER_CORE_HANDLER_ATTACH=PASS");
     runtime_log(config, "WINE_SERVER_CORE_DEVICE_LOAD=PASS");
     return 0;
 }

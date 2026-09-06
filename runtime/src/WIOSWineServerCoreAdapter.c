@@ -41,27 +41,20 @@ uint32_t wios_wine_server_core_abi_version(void)
 __attribute__((visibility("default")))
 int wios_wine_server_core_has_close_handle(void)
 {
-    /*
-     * Taking the address creates a real link-time dependency on Wine's
-     * req_close_handle without executing it.
-     */
     wios_close_handle_handler handler = req_close_handle;
     return handler != 0;
 }
 
 /*
- * Execute one real Wine server handler under the smallest state that the
- * close_handle path requires.
+ * Execute Wine's real close_handle request handler under the smallest state
+ * needed for the invalid-handle path. The supplied handle is passed through
+ * unchanged; with process->handles == NULL, Wine must return
+ * STATUS_INVALID_HANDLE without touching an object table.
  *
- * handle == 0 is deliberately invalid. Wine's req_close_handle therefore
- * only needs current->process and process->handles; with handles == NULL it
- * returns STATUS_INVALID_HANDLE without touching an object table.
- *
- * The Wine current/global error state is restored before returning so the
- * synthetic request cannot leak into later runtime work.
+ * Wine's current/global error state is restored before returning.
  */
 __attribute__((visibility("default")))
-uint32_t wios_wine_server_core_probe_invalid_close(void)
+uint32_t wios_wine_server_core_dispatch_close_handle(uint32_t handle)
 {
     struct process probe_process;
     struct thread probe_thread;
@@ -69,6 +62,7 @@ uint32_t wios_wine_server_core_probe_invalid_close(void)
     struct close_handle_reply reply;
     struct thread *saved_current = current;
     unsigned int saved_global_error = global_error;
+    unsigned int saved_current_error = saved_current ? saved_current->error : 0;
     uint32_t status;
 
     memset(&probe_process, 0, sizeof(probe_process));
@@ -82,7 +76,7 @@ uint32_t wios_wine_server_core_probe_invalid_close(void)
     request.__header.req = REQ_close_handle;
     request.__header.request_size = 0;
     request.__header.reply_size = 0;
-    request.handle = 0;
+    request.handle = (obj_handle_t)handle;
 
     current = &probe_thread;
     clear_error();
@@ -92,6 +86,13 @@ uint32_t wios_wine_server_core_probe_invalid_close(void)
 
     current = saved_current;
     global_error = saved_global_error;
+    if (saved_current) saved_current->error = saved_current_error;
 
     return status;
+}
+
+__attribute__((visibility("default")))
+uint32_t wios_wine_server_core_probe_invalid_close(void)
+{
+    return wios_wine_server_core_dispatch_close_handle(0);
 }

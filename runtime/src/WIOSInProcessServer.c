@@ -11,6 +11,7 @@
 #include "wine/server_protocol.h"
 
 #define WIOS_STATUS_NOT_IMPLEMENTED 0xC0000002u
+#define WIOS_STATUS_INVALID_HANDLE  0xC0000008u
 
 enum
 {
@@ -39,6 +40,8 @@ typedef struct
     union generic_request wine_request;
     union generic_reply wine_reply;
 
+    wios_close_handle_dispatch close_handle_dispatch;
+
     wios_log_callback log_callback;
     void *log_context;
 
@@ -51,7 +54,7 @@ static wios_inproc_server_state server = {
 };
 
 /*
- * These are intentional ABI gates.  If the pinned Wine baseline changes its
+ * These are intentional ABI gates. If the pinned Wine baseline changes its
  * wire layout, Arcadia must notice at compile time instead of silently
  * corrupting request/reply frames.
  */
@@ -112,6 +115,27 @@ static struct timespec deadline_after_ms(long milliseconds)
     return deadline;
 }
 
+int wios_inproc_server_attach_close_handle(wios_close_handle_dispatch dispatch)
+{
+    if (!dispatch)
+    {
+        set_error("missing close_handle dispatcher");
+        return -1;
+    }
+
+    pthread_mutex_lock(&server.mutex);
+    if (server.running)
+    {
+        set_error("cannot attach close_handle dispatcher while server is running");
+        pthread_mutex_unlock(&server.mutex);
+        return -2;
+    }
+
+    server.close_handle_dispatch = dispatch;
+    pthread_mutex_unlock(&server.mutex);
+    return 0;
+}
+
 static void handle_wine_protocol_frame(void)
 {
     const struct request_header *header = &server.wine_request.request_header;
@@ -127,14 +151,20 @@ static void handle_wine_protocol_frame(void)
         return;
     }
 
-    /*
-     * Phase 2 deliberately recognizes a real Wine request number and returns
-     * a real Wine reply_header.  The existing Wine object/handle core has not
-     * been attached yet, so close_handle is expected to return
-     * STATUS_NOT_IMPLEMENTED here.
-     */
     if (header->req == REQ_close_handle)
     {
+        if (server.close_handle_dispatch)
+        {
+            const struct close_handle_request *request =
+                &server.wine_request.close_handle_request;
+
+            reply->error =
+                server.close_handle_dispatch((uint32_t)request->handle);
+            reply->reply_size = 0;
+            server.response_code = 0;
+            return;
+        }
+
         reply->error = WIOS_STATUS_NOT_IMPLEMENTED;
         reply->reply_size = 0;
         server.response_code = 0;
@@ -279,7 +309,7 @@ int wios_inproc_server_start(wios_log_callback log_callback, void *log_context)
     pthread_mutex_unlock(&server.mutex);
 
     log_line("INPROC_SERVER_READY=PASS");
-    log_line("INPROC_SERVER_CORE=PROTOCOL_BRIDGE_PHASE");
+    log_line("INPROC_SERVER_CORE=HANDLER_ATTACH_PHASE");
     return 0;
 }
 
@@ -349,6 +379,7 @@ int wios_inproc_server_probe_wine_protocol(void)
     struct close_handle_request *request;
     struct reply_header reply;
     int response;
+    int handler_attached;
 
     pthread_mutex_lock(&server.mutex);
 
@@ -369,6 +400,7 @@ int wios_inproc_server_probe_wine_protocol(void)
     request->__header.reply_size = 0;
     request->handle = 0;
 
+    handler_attached = server.close_handle_dispatch != NULL;
     response = submit_request_and_wait(WIOS_REQUEST_WINE_PROTOCOL, NULL);
     reply = server.wine_reply.reply_header;
 
@@ -386,11 +418,36 @@ int wios_inproc_server_probe_wine_protocol(void)
 
     log_line("WINE_SERVER_PROTOCOL_FRAME=PASS");
 
-    if (reply.error != WIOS_STATUS_NOT_IMPLEMENTED || reply.reply_size != 0)
+    if (reply.reply_size != 0)
     {
-        set_error("Wine protocol bridge returned unexpected reply header");
+        set_error("Wine protocol bridge returned unexpected reply size");
         log_line("WINE_SERVER_PROTOCOL_REPLY=FAIL");
         return -3;
+    }
+
+    if (handler_attached)
+    {
+        if (reply.error != WIOS_STATUS_INVALID_HANDLE)
+        {
+            set_error("attached Wine close_handle handler returned unexpected status");
+            log_line("WINE_SERVER_HANDLER_DISPATCH=FAIL");
+            log_line("WINE_SERVER_PROTOCOL_REPLY=FAIL");
+            return -4;
+        }
+
+        log_line("WINE_SERVER_PROTOCOL_REPLY=PASS");
+        log_line("WINE_SERVER_HANDLERS=ATTACHED");
+        log_line("WINE_SERVER_HANDLER_DISPATCH=PASS");
+        log_line("WINE_SERVER_HANDLER_REPLY=STATUS_INVALID_HANDLE");
+        log_line("INPROC_SERVER_PROTOCOL_BRIDGE=PASS");
+        return 0;
+    }
+
+    if (reply.error != WIOS_STATUS_NOT_IMPLEMENTED)
+    {
+        set_error("unattached Wine protocol bridge returned unexpected status");
+        log_line("WINE_SERVER_PROTOCOL_REPLY=FAIL");
+        return -5;
     }
 
     log_line("WINE_SERVER_PROTOCOL_REPLY=PASS");
