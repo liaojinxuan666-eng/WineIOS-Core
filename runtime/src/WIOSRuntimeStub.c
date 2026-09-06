@@ -10,6 +10,8 @@
 
 #include "wine/server_protocol.h"
 
+#define WIOS_STATUS_INVALID_HANDLE 0xC0000008u
+
 static void *ntdll_handle;
 static void *wine_main_entry;
 static void *wine_server_core_handle;
@@ -93,8 +95,10 @@ static int probe_real_wine_server_core(const wios_runtime_config *config,
     wios_core_u32_fn protocol_version;
     wios_core_u32_fn abi_version;
     wios_core_bool_fn has_close_handle;
+    wios_core_u32_fn probe_invalid_close;
     uint32_t protocol;
     uint32_t abi;
+    uint32_t handler_status;
 
     if (!make_path(core_path, sizeof(core_path),
                    runtime_root, "libWIOSWineServerCore.dylib"))
@@ -124,8 +128,11 @@ static int probe_real_wine_server_core(const wios_runtime_config *config,
         wine_server_core_handle, "wios_wine_server_core_abi_version");
     has_close_handle = (wios_core_bool_fn)dlsym(
         wine_server_core_handle, "wios_wine_server_core_has_close_handle");
+    probe_invalid_close = (wios_core_u32_fn)dlsym(
+        wine_server_core_handle, "wios_wine_server_core_probe_invalid_close");
 
-    if (!protocol_version || !abi_version || !has_close_handle)
+    if (!protocol_version || !abi_version ||
+        !has_close_handle || !probe_invalid_close)
     {
         dl_error = dlerror();
         set_error(dl_error ? dl_error : "Wine server core API symbol missing");
@@ -176,12 +183,34 @@ static int probe_real_wine_server_core(const wios_runtime_config *config,
     runtime_log(config, "WINE_SERVER_CORE_HANDLER_LINK=PASS");
 
     /*
-     * This gate intentionally stops before executing req_close_handle.
-     * The real handler requires Wine's current thread/process/handle state.
-     * Device-loading the complete core and resolving the real handler is the
-     * safe prerequisite for attaching that state in the next phase.
+     * First controlled execution of a real Wine server handler.
+     * The adapter supplies a zero-handle synthetic process/thread context.
+     * req_close_handle must therefore execute and return STATUS_INVALID_HANDLE.
      */
-    runtime_log(config, "WINE_SERVER_CORE_HANDLER_EXECUTION=NOT_ATTEMPTED");
+    handler_status = probe_invalid_close();
+
+    {
+        char line[128];
+        snprintf(line, sizeof(line),
+                 "WINE_SERVER_CORE_HANDLER_STATUS=0x%08X",
+                 (unsigned int)handler_status);
+        runtime_log(config, line);
+    }
+
+    if (handler_status != WIOS_STATUS_INVALID_HANDLE)
+    {
+        snprintf(error_buffer, sizeof(error_buffer),
+                 "Wine req_close_handle returned 0x%08X; expected 0x%08X",
+                 (unsigned int)handler_status,
+                 (unsigned int)WIOS_STATUS_INVALID_HANDLE);
+        runtime_log(config, "WINE_SERVER_CORE_HANDLER_CONTEXT=FAIL");
+        runtime_log(config, "WINE_SERVER_CORE_HANDLER_EXECUTION=FAIL");
+        return -7;
+    }
+
+    runtime_log(config, "WINE_SERVER_CORE_HANDLER_CONTEXT=PASS");
+    runtime_log(config, "WINE_SERVER_CORE_HANDLER_EXECUTION=PASS");
+    runtime_log(config, "WINE_SERVER_CORE_HANDLER_RESULT=PASS");
     runtime_log(config, "WINE_SERVER_CORE_DEVICE_LOAD=PASS");
     return 0;
 }

@@ -44,6 +44,8 @@ require_file "$HELLO_EXE"
 require_file "$INPROC_SERVER_SOURCE"
 require_file "$WINE_SERVER_CORE_ADAPTER_SOURCE"
 require_file "$WINE_SOURCE/include/wine/server_protocol.h"
+require_file "$WINE_SOURCE/server/process.h"
+require_file "$WINE_SOURCE/server/thread.h"
 
 rm -rf "$OBJECT_ROOT" "$APP_ROOT"
 mkdir -p "$OBJECT_ROOT"
@@ -71,6 +73,7 @@ WINE_NATIVE_FLAGS="-D__WINESRC__ -I$WINE_SOURCE/include -fms-extensions"
     -c "$INPROC_SERVER_SOURCE" -o "$OBJECT_ROOT/WIOSInProcessServer.o"
 "$CLANG" -arch arm64 -isysroot "$SDK_PATH" -miphoneos-version-min="$WIOS_MIN_IOS" \
     $WINE_NATIVE_FLAGS \
+    -I"$WINE_SOURCE/server" \
     -c "$WINE_SERVER_CORE_ADAPTER_SOURCE" \
     -o "$OBJECT_ROOT/WIOSWineServerCoreAdapter.o"
 
@@ -90,8 +93,8 @@ if [ ! -s "$SERVER_OBJECT_LIST" ]; then
 fi
 
 # The exact same Wine server objects already passed the CI in-process core
-# link gate.  This build packages that real core for a harmless device dlopen
-# and ABI/symbol-resolution test; it does not execute req_close_handle yet.
+# link gate. This build packages that core together with a tightly controlled
+# invalid-close handler probe. Normal wineserver startup is still not invoked.
 # shellcheck disable=SC2086
 "$CLANG" \
     -arch arm64 \
@@ -143,7 +146,7 @@ mkdir -p "$BUILD_ROOT/logs"
     file "$RUNTIME_ROOT/hello/hello.exe"
     echo "HOST_SERVER_MODEL=IN_PROCESS"
     echo "WINE_SERVER_CORE=BUNDLED_REAL_OBJECTS"
-    echo "WINE_SERVER_CORE_HANDLER_EXECUTION=NOT_ATTEMPTED"
+    echo "WINE_SERVER_CORE_HANDLER_EXECUTION=DEVICE_TEST_REQUIRED"
     echo "WINE_PROTOCOL_HEADER=$WINE_SOURCE/include/wine/server_protocol.h"
     echo "WINE_PROTOCOL_BRIDGE=COMPILED"
     echo "BUNDLED_WINESERVER=NO"
@@ -163,6 +166,6 @@ codesign --verify --deep --strict "$APP_ROOT"
 
 echo "Built $APP_ROOT"
 echo "Host server model: in-process"
-echo "Real Wine server core: bundled for device-load gate"
+echo "Real Wine server core: bundled with controlled handler probe"
 echo "Wine server protocol bridge: compiled"
 echo "Runtime layout log: $LAYOUT_LOG"
