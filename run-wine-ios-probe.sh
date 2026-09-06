@@ -18,6 +18,7 @@ LLVM_MINGW_ARCHIVE="$PROJECT_ROOT/build/toolchains/$LLVM_MINGW_NAME.tar.xz"
 LLVM_MINGW_SHA256=48bedd161f14ae25a3646cb750b57ee3188e97e34bd3c52240c1810aa74d6a7f
 
 WINE_SERVER_HANDLER_SYMBOL_RESULT=NOT_RUN
+WINE_SERVER_GLOBALS_ADAPTER_RESULT=NOT_RUN
 WINE_SERVER_CORE_LINK_RESULT=NOT_RUN
 
 mkdir -p "$LOG_ROOT"
@@ -100,9 +101,8 @@ xcrun vtool -show-build "$WINESERVER" | tee -a "$LOG_ROOT/wine-ios-wineserver-in
 # verify that Wine's *real* server handler objects can be separated from the
 # wineserver executable entry point and linked as an in-process arm64/iOS core.
 #
-# This probe is intentionally non-fatal.  A blocked dylib link must not break
-# the already-passing Wine runtime Host/IPA path.  The linker diagnostics tell
-# us exactly which globals/entry-point pieces need a thin adapter next.
+# This probe is intentionally non-fatal. A blocked dylib link must not break
+# the already-passing Wine runtime Host/IPA path.
 #
 probe_step probe-inprocess-wineserver-core-link
 
@@ -112,11 +112,14 @@ SERVER_DIR="$IOS_BUILD/server"
 SERVER_CORE_LOG="$LOG_ROOT/wine-ios-inproc-server-core-link.log"
 SERVER_OBJECT_LIST="$LOG_ROOT/wine-ios-inproc-server-core-objects.log"
 SERVER_CORE_DYLIB="$SERVER_DIR/libWIOSWineServerCoreProbe.dylib"
+SERVER_GLOBALS_SOURCE="$PROJECT_ROOT/build/wios-inproc-wineserver-globals.c"
+SERVER_GLOBALS_OBJ="$PROJECT_ROOT/build/wios-inproc-wineserver-globals.o"
 SDK_PATH=$(xcrun --sdk iphoneos --show-sdk-path)
 IOS_CLANG=$(xcrun --sdk iphoneos --find clang)
 
 : > "$SERVER_CORE_LOG"
 : > "$SERVER_OBJECT_LIST"
+rm -f "$SERVER_CORE_DYLIB" "$SERVER_GLOBALS_SOURCE" "$SERVER_GLOBALS_OBJ"
 
 printf '%s\n' "PROBE=INPROCESS_WINE_SERVER_CORE_LINK" | tee -a "$SERVER_CORE_LOG"
 printf 'WIOS_MIN_IOS=%s\n' "$WIOS_MIN_IOS" | tee -a "$SERVER_CORE_LOG"
@@ -142,10 +145,57 @@ done
 printf 'WINE_SERVER_CORE_OBJECT_COUNT=%s\n' "${#SERVER_OBJECTS[@]}" | tee -a "$SERVER_CORE_LOG"
 printf '%s\n' "WINE_SERVER_CORE_ENTRYPOINT_EXCLUDED=main.o" | tee -a "$SERVER_CORE_LOG"
 
+# Wine server/main.c defines four globals that the reusable server objects
+# reference. main.o stays excluded; only the exact ABI globals/defaults are
+# supplied here so executable startup/option parsing is not pulled in.
+cat > "$SERVER_GLOBALS_SOURCE" <<'WIOS_SERVER_GLOBALS'
+#include "wine/server_protocol.h"
+
+#define WIOS_TICKS_PER_SEC 10000000
+
+int debug_level = 0;
+int foreground = 0;
+timeout_t master_socket_timeout = (timeout_t)(-3LL * WIOS_TICKS_PER_SEC);
+const char *server_argv0 = 0;
+WIOS_SERVER_GLOBALS
+
+if "$IOS_CLANG" \
+        -arch arm64 \
+        -isysroot "$SDK_PATH" \
+        -miphoneos-version-min="$WIOS_MIN_IOS" \
+        -I"$WINE_SOURCE/include" \
+        -fms-extensions \
+        -D__WINESRC__ \
+        -c "$SERVER_GLOBALS_SOURCE" \
+        -o "$SERVER_GLOBALS_OBJ" >> "$SERVER_CORE_LOG" 2>&1; then
+    ADAPTER_SYMBOLS_OK=1
+    for symbol in _debug_level _foreground _master_socket_timeout _server_argv0; do
+        if ! xcrun nm -gU "$SERVER_GLOBALS_OBJ" 2>/dev/null | grep -q " ${symbol}$"; then
+            ADAPTER_SYMBOLS_OK=0
+            printf 'WINE_SERVER_GLOBAL_MISSING=%s\n' "$symbol" | tee -a "$SERVER_CORE_LOG"
+        fi
+    done
+
+    if [[ "$ADAPTER_SYMBOLS_OK" -eq 1 ]]; then
+        WINE_SERVER_GLOBALS_ADAPTER_RESULT=PASS
+        printf '%s\n' "WINE_SERVER_GLOBALS_ADAPTER=PASS" | tee -a "$SERVER_CORE_LOG"
+    else
+        WINE_SERVER_GLOBALS_ADAPTER_RESULT=FAIL
+        printf '%s\n' "WINE_SERVER_GLOBALS_ADAPTER=FAIL" | tee -a "$SERVER_CORE_LOG"
+    fi
+else
+    WINE_SERVER_GLOBALS_ADAPTER_RESULT=FAIL
+    printf '%s\n' "WINE_SERVER_GLOBALS_ADAPTER=FAIL" | tee -a "$SERVER_CORE_LOG"
+fi
+
 if [[ "${#SERVER_OBJECTS[@]}" -eq 0 ]]; then
     WINE_SERVER_CORE_LINK_RESULT=BLOCKED
     printf '%s\n' "WINE_SERVER_CORE_LINK=BLOCKED" | tee -a "$SERVER_CORE_LOG"
     printf '%s\n' "WINE_SERVER_CORE_LINK_REASON=NO_OBJECTS" | tee -a "$SERVER_CORE_LOG"
+elif [[ "$WINE_SERVER_GLOBALS_ADAPTER_RESULT" != PASS ]]; then
+    WINE_SERVER_CORE_LINK_RESULT=BLOCKED
+    printf '%s\n' "WINE_SERVER_CORE_LINK=BLOCKED" | tee -a "$SERVER_CORE_LOG"
+    printf '%s\n' "WINE_SERVER_CORE_LINK_REASON=GLOBALS_ADAPTER" | tee -a "$SERVER_CORE_LOG"
 elif "$IOS_CLANG" \
         -arch arm64 \
         -isysroot "$SDK_PATH" \
@@ -154,6 +204,7 @@ elif "$IOS_CLANG" \
         -Wl,-undefined,error \
         -Wl,-install_name,@rpath/libWIOSWineServerCoreProbe.dylib \
         "${SERVER_OBJECTS[@]}" \
+        "$SERVER_GLOBALS_OBJ" \
         -o "$SERVER_CORE_DYLIB" >> "$SERVER_CORE_LOG" 2>&1; then
     WINE_SERVER_CORE_LINK_RESULT=PASS
     printf '%s\n' "WINE_SERVER_CORE_LINK=PASS" | tee -a "$SERVER_CORE_LOG"
@@ -256,6 +307,7 @@ echo "IOS_UNIX_RUNTIME=CONFIGURED" | tee -a "$LOG_ROOT/probe-summary.txt"
 echo "NTDLL_UNIXLIB=PASS" | tee -a "$LOG_ROOT/probe-summary.txt"
 echo "WINESERVER=PASS" | tee -a "$LOG_ROOT/probe-summary.txt"
 echo "WINE_SERVER_HANDLER_SYMBOL=$WINE_SERVER_HANDLER_SYMBOL_RESULT" | tee -a "$LOG_ROOT/probe-summary.txt"
+echo "WINE_SERVER_GLOBALS_ADAPTER=$WINE_SERVER_GLOBALS_ADAPTER_RESULT" | tee -a "$LOG_ROOT/probe-summary.txt"
 echo "WINE_SERVER_CORE_LINK=$WINE_SERVER_CORE_LINK_RESULT" | tee -a "$LOG_ROOT/probe-summary.txt"
 echo "WINDOWS_ARM64_CORE_PE=PASS" | tee -a "$LOG_ROOT/probe-summary.txt"
 echo "IOS_WINE_LOADER_BUILD=PASS" | tee -a "$LOG_ROOT/probe-summary.txt"
