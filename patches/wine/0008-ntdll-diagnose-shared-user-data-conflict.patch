@@ -1,0 +1,49 @@
+diff --git a/dlls/ntdll/unix/virtual.c b/dlls/ntdll/unix/virtual.c
+index c98d09a..963ca5b 100644
+--- a/dlls/ntdll/unix/virtual.c
++++ b/dlls/ntdll/unix/virtual.c
+@@ -4035,6 +4035,8 @@ static void reserve_area( void *addr, void *end )
+ #if defined(__APPLE__) && defined(__MACH__) && defined(WINE_IOS)
+ static unsigned int wios_first_teb_shared_data_probe_reached;
+ static unsigned int wios_first_teb_shared_data_probe_status;
++static unsigned int wios_first_teb_shared_data_view_conflict;
++static int wios_first_teb_shared_data_reserved_state;
+ 
+ __attribute__((visibility("default")))
+ unsigned int wios_ntdll_get_first_teb_shared_data_probe_reached(void)
+@@ -4047,6 +4049,18 @@ unsigned int wios_ntdll_get_first_teb_shared_data_probe_status(void)
+ {
+     return wios_first_teb_shared_data_probe_status;
+ }
++
++__attribute__((visibility("default")))
++unsigned int wios_ntdll_get_first_teb_shared_data_view_conflict(void)
++{
++    return wios_first_teb_shared_data_view_conflict;
++}
++
++__attribute__((visibility("default")))
++int wios_ntdll_get_first_teb_shared_data_reserved_state(void)
++{
++    return wios_first_teb_shared_data_reserved_state;
++}
+ #endif
+ 
+ 
+@@ -4063,6 +4077,16 @@ TEB *virtual_alloc_first_teb(void)
+     SIZE_T total = 32 * block_size;
+ 
+     /* reserve space for shared user data */
++#if defined(__APPLE__) && defined(__MACH__) && defined(WINE_IOS)
++    if (getenv( "WIOS_FIRST_TEB_PROBE" ) &&
++        !strcmp( getenv( "WIOS_FIRST_TEB_PROBE" ), "shared_user_data" ))
++    {
++        wios_first_teb_shared_data_view_conflict =
++            find_view_range( user_shared_data, data_size ) ? 1u : 0u;
++        wios_first_teb_shared_data_reserved_state =
++            mmap_is_in_reserved_area( user_shared_data, data_size );
++    }
++#endif
+     status = NtAllocateVirtualMemory( NtCurrentProcess(), (void **)&user_shared_data, 0, &data_size,
+                                       MEM_RESERVE | MEM_COMMIT, PAGE_READONLY );
+ #if defined(__APPLE__) && defined(__MACH__) && defined(WINE_IOS)

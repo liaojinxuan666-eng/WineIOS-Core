@@ -33,6 +33,7 @@ typedef void (*wios_ntdll_set_main_probe_stage_fn)(uint32_t stage);
 typedef uint32_t (*wios_ntdll_get_environment_probe_state_fn)(void);
 typedef uint32_t (*wios_ntdll_get_main_probe_result_stage_fn)(void);
 typedef uint32_t (*wios_ntdll_get_first_teb_probe_u32_fn)(void);
+typedef int32_t (*wios_ntdll_get_first_teb_probe_i32_fn)(void);
 
 static wios_ntdll_set_bridge_fn ntdll_set_server_call_bridge;
 static wios_ntdll_set_main_probe_stage_fn ntdll_set_main_probe_stage;
@@ -320,9 +321,13 @@ static int probe_wine_main_entry(const wios_runtime_config *config)
     wios_ntdll_get_main_probe_result_stage_fn get_main_probe_result_stage;
     wios_ntdll_get_first_teb_probe_u32_fn get_first_teb_shared_data_probe_reached;
     wios_ntdll_get_first_teb_probe_u32_fn get_first_teb_shared_data_probe_status;
+    wios_ntdll_get_first_teb_probe_u32_fn get_first_teb_shared_data_view_conflict;
+    wios_ntdll_get_first_teb_probe_i32_fn get_first_teb_shared_data_reserved_state;
     uint32_t environment_probe_state;
     uint32_t first_teb_shared_data_reached;
     uint32_t first_teb_shared_data_status;
+    uint32_t first_teb_shared_data_view_conflict;
+    int32_t first_teb_shared_data_reserved_state;
     static char arg0[] = "wine";
     static char arg1[] = "__wios_main_entry_probe__";
     static char *argv[] = { arg0, arg1, NULL };
@@ -423,7 +428,14 @@ static int probe_wine_main_entry(const wios_runtime_config *config)
         ntdll_handle, "wios_ntdll_get_first_teb_shared_data_probe_reached");
     get_first_teb_shared_data_probe_status = (wios_ntdll_get_first_teb_probe_u32_fn)dlsym(
         ntdll_handle, "wios_ntdll_get_first_teb_shared_data_probe_status");
-    if (!get_first_teb_shared_data_probe_reached || !get_first_teb_shared_data_probe_status)
+    get_first_teb_shared_data_view_conflict = (wios_ntdll_get_first_teb_probe_u32_fn)dlsym(
+        ntdll_handle, "wios_ntdll_get_first_teb_shared_data_view_conflict");
+    get_first_teb_shared_data_reserved_state = (wios_ntdll_get_first_teb_probe_i32_fn)dlsym(
+        ntdll_handle, "wios_ntdll_get_first_teb_shared_data_reserved_state");
+    if (!get_first_teb_shared_data_probe_reached ||
+        !get_first_teb_shared_data_probe_status ||
+        !get_first_teb_shared_data_view_conflict ||
+        !get_first_teb_shared_data_reserved_state)
     {
         dl_error = dlerror();
         set_error(dl_error ? dl_error : "NTDLL first-TEB shared-data probe symbol missing");
@@ -485,6 +497,20 @@ static int probe_wine_main_entry(const wios_runtime_config *config)
         return -12;
     }
     runtime_log(config, "WINE_FIRST_TEB_SHARED_DATA_CALL=PASS");
+
+    first_teb_shared_data_view_conflict = get_first_teb_shared_data_view_conflict();
+    runtime_log(config, first_teb_shared_data_view_conflict
+                         ? "WINE_FIRST_TEB_SHARED_DATA_WINE_VIEW_CONFLICT=YES"
+                         : "WINE_FIRST_TEB_SHARED_DATA_WINE_VIEW_CONFLICT=NO");
+
+    first_teb_shared_data_reserved_state = get_first_teb_shared_data_reserved_state();
+    {
+        char line[128];
+        snprintf(line, sizeof(line),
+                 "WINE_FIRST_TEB_SHARED_DATA_RESERVED_STATE=%d",
+                 (int)first_teb_shared_data_reserved_state);
+        runtime_log(config, line);
+    }
 
     first_teb_shared_data_status = get_first_teb_shared_data_probe_status();
     {
