@@ -35,6 +35,7 @@ server reply -> ntdll path            PASS
 host runtime initialize               PASS
 real __wine_main entry                PASS
 Wine init_paths                       PASS
+Wine virtual_init                     PASS
 ```
 
 最近一次真机验证已经形成两条已确认链路。
@@ -74,17 +75,18 @@ __wine_main()
    ↓
 init_paths()
    ↓
+virtual_init()
+   ↓
 probe stop
 ```
 
-当前探针会在 `init_paths()` 完成后主动返回，因此不会误把尚未执行的后续阶段标记为完成。
+当前探针已经验证 `virtual_init()` 完整返回，并在其后主动停止，因此不会误把尚未执行的后续阶段标记为完成。
 
 ## 尚未完成
 
 当前 **不声称**已经可以运行 Windows 应用。
 
 ```text
-virtual_init                        NOT RUN
 init_environment                    NOT RUN
 Apple main-thread transition        NOT RUN
 start_main_thread                   NOT RUN
@@ -151,21 +153,22 @@ CI 成功只证明构建链成立。真正的运行状态必须以 iPhone 真机
 
 ## 下一道门
 
-下一阶段只推进一件事：**从已经通过的 `init_paths()` 继续进入 `virtual_init()`，仍然不启动 `hello.exe`。**
+下一阶段只推进一件事：**从已经通过的 `virtual_init()` 继续进入 `init_environment()`，仍然不启动 `hello.exe`。**
 
 目标探针：
 
 ```text
 WINE_MAIN_ENTER=PASS
 WINE_MAIN_PATH_INIT=PASS
-WINE_VIRTUAL_INIT=PASS / FAIL_AT=<exact stage>
-WINE_ENV_INIT=NOT_RUN
+WINE_VIRTUAL_INIT=PASS
+WINE_ENV_INIT=PASS / FAIL_AT=<exact stage>
+WINE_MAIN_THREAD_INIT=NOT_RUN
 WINDOWS_ARM64_HELLO=NOT_RUN
 ```
 
 如果失败，必须把失败点定位到具体初始化阶段，而不是一次加入大量补丁。
 
-只有 `virtual_init()` 稳定后，才继续推进 `init_environment()` 与后续主线程初始化。
+只有 `init_environment()` 稳定后，才继续推进后续主线程初始化。
 
 ## 开发原则
 

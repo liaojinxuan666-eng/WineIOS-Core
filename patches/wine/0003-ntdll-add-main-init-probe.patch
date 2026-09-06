@@ -40,3 +40,7 @@ diff --git a/dlls/ntdll/unix/loader.c b/dlls/ntdll/unix/loader.c
 +#endif
 +
      init_environment();
++#if defined(__APPLE__) && defined(__MACH__)
++    /* Stage 3 proves Wine environment initialization. */
++    if (wios_main_probe_stop_stage == 3) return;
++#endif
