@@ -16,6 +16,7 @@
 #define WIOS_MAIN_PROBE_STAGE_VIRTUAL_INIT 2u
 #define WIOS_MAIN_PROBE_STAGE_ENVIRONMENT 3u
 #define WIOS_MAIN_PROBE_STAGE_IOS_THREAD_BOUNDARY 4u
+#define WIOS_MAIN_PROBE_STAGE_FIRST_TEB 5u
 
 static void *ntdll_handle;
 static void *wine_main_entry;
@@ -30,6 +31,7 @@ typedef uint32_t (*wios_ntdll_probe_call_fn)(void *);
 typedef void (*wios_wine_main_fn)(int argc, char **argv);
 typedef void (*wios_ntdll_set_main_probe_stage_fn)(uint32_t stage);
 typedef uint32_t (*wios_ntdll_get_environment_probe_state_fn)(void);
+typedef uint32_t (*wios_ntdll_get_main_probe_result_stage_fn)(void);
 
 static wios_ntdll_set_bridge_fn ntdll_set_server_call_bridge;
 static wios_ntdll_set_main_probe_stage_fn ntdll_set_main_probe_stage;
@@ -314,7 +316,9 @@ static int probe_wine_main_entry(const wios_runtime_config *config)
     const char *prefix;
     wios_wine_main_fn wine_main;
     wios_ntdll_get_environment_probe_state_fn get_environment_probe_state;
+    wios_ntdll_get_main_probe_result_stage_fn get_main_probe_result_stage;
     uint32_t environment_probe_state;
+    uint32_t main_probe_result_stage;
     static char arg0[] = "wine";
     static char arg1[] = "__wios_main_entry_probe__";
     static char *argv[] = { arg0, arg1, NULL };
@@ -397,8 +401,21 @@ static int probe_wine_main_entry(const wios_runtime_config *config)
     }
     runtime_log(config, "WINE_ENV_PROBE_STATE_SYMBOL=PASS");
 
+    dlerror();
+    get_main_probe_result_stage = (wios_ntdll_get_main_probe_result_stage_fn)dlsym(
+        ntdll_handle, "wios_ntdll_get_main_probe_result_stage");
+    if (!get_main_probe_result_stage)
+    {
+        dl_error = dlerror();
+        set_error(dl_error ? dl_error : "NTDLL main-thread probe result symbol missing");
+        runtime_log(config, "WINE_MAIN_PROBE_RESULT_SYMBOL=FAIL");
+        unsetenv("WIOS_ENV_PROBE");
+        return -8;
+    }
+    runtime_log(config, "WINE_MAIN_PROBE_RESULT_SYMBOL=PASS");
+
     wine_main = (wios_wine_main_fn)wine_main_entry;
-    ntdll_set_main_probe_stage(WIOS_MAIN_PROBE_STAGE_IOS_THREAD_BOUNDARY);
+    ntdll_set_main_probe_stage(WIOS_MAIN_PROBE_STAGE_FIRST_TEB);
     runtime_log(config, "WINE_MAIN_CALL=BEGIN");
     wine_main(2, argv);
     ntdll_set_main_probe_stage(0);
@@ -418,15 +435,31 @@ static int probe_wine_main_entry(const wios_runtime_config *config)
                  (unsigned int)environment_probe_state);
         runtime_log(config, "WINE_ENV_CASE_TABLE=FAIL");
         runtime_log(config, "WINE_ENV_INIT=FAIL");
-        return -8;
+        return -9;
     }
 
     runtime_log(config, "WINE_ENV_CASE_TABLE=PASS");
     runtime_log(config, "WINE_ENV_INIT=PASS");
     runtime_log(config, "WINE_IOS_MAIN_THREAD_BOUNDARY=PASS");
     runtime_log(config, "WINE_APPLE_MAIN_THREAD=SKIPPED_IOS_HOST");
-    runtime_log(config, "WINE_MAIN_STOP_AFTER=IOS_THREAD_BOUNDARY");
-    runtime_log(config, "WINE_MAIN_THREAD_INIT=NOT_RUN");
+
+    main_probe_result_stage = get_main_probe_result_stage();
+    if (main_probe_result_stage != WIOS_MAIN_PROBE_STAGE_FIRST_TEB)
+    {
+        snprintf(error_buffer, sizeof(error_buffer),
+                 "Wine first TEB probe did not complete (stage=%u)",
+                 (unsigned int)main_probe_result_stage);
+        runtime_log(config, "WINE_MAIN_THREAD_FIRST_TEB=FAIL");
+        runtime_log(config, "WINE_MAIN_THREAD_INIT=FAIL");
+        return -10;
+    }
+
+    runtime_log(config, "WINE_MAIN_THREAD_ENTER=PASS");
+    runtime_log(config, "WINE_MAIN_THREAD_FIRST_TEB=PASS");
+    runtime_log(config, "WINE_MAIN_THREAD_INIT=PARTIAL");
+    runtime_log(config, "WINE_MAIN_STOP_AFTER=FIRST_TEB");
+    runtime_log(config, "WINE_SIGNAL_INIT_THREADING=NOT_RUN");
+    runtime_log(config, "WINE_SERVER_INIT_PROCESS=NOT_RUN");
     runtime_log(config, "WINE_PREFIX_INIT=NOT_RUN");
     runtime_log(config, "WINDOWS_LOADER_INIT=NOT_RUN");
     runtime_log(config, "WINDOWS_ARM64_HELLO=NOT_RUN");

@@ -1,0 +1,39 @@
+diff --git a/dlls/ntdll/unix/loader.c b/dlls/ntdll/unix/loader.c
+index 7fab056..d24c2d3 100644
+--- a/dlls/ntdll/unix/loader.c
++++ b/dlls/ntdll/unix/loader.c
+@@ -195,11 +195,19 @@ SECTION_IMAGE_INFORMATION main_image_info = { NULL };
+ 
+ #if defined(__APPLE__) && defined(__MACH__)
+ static unsigned int wios_main_probe_stop_stage;
++static unsigned int wios_main_probe_result_stage;
+ 
+ __attribute__((visibility("default")))
+ void wios_ntdll_set_main_probe_stop_stage( unsigned int stage )
+ {
+     wios_main_probe_stop_stage = stage;
++    if (stage) wios_main_probe_result_stage = 0;
++}
++
++__attribute__((visibility("default")))
++unsigned int wios_ntdll_get_main_probe_result_stage(void)
++{
++    return wios_main_probe_result_stage;
+ }
+ #endif
+ 
+@@ -1919,6 +1927,14 @@ static void start_main_thread(void)
+ {
+     TEB *teb = virtual_alloc_first_teb();
+ 
++#if defined(__APPLE__) && defined(__MACH__)
++    if (wios_main_probe_stop_stage == 5)
++    {
++        if (teb) wios_main_probe_result_stage = 5;
++        return;
++    }
++#endif
++
+     signal_init_threading();
+     dbg_init();
+     startup_info_size = server_init_process();

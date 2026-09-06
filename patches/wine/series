@@ -3,3 +3,4 @@
 0003-ntdll-add-main-init-probe.patch
 0004-ntdll-advance-environment-probe.patch
 0005-ntdll-add-ios-main-thread-boundary-probe.patch
+0006-ntdll-probe-first-teb.patch
