@@ -41,6 +41,26 @@ diff --git a/dlls/ntdll/unix/loader.c b/dlls/ntdll/unix/loader.c
 +
      init_environment();
 +#if defined(__APPLE__) && defined(__MACH__)
-+    /* Stage 3 proves Wine environment initialization. */
++    /* Stage 3 returns after the selected environment probe slice. */
 +    if (wios_main_probe_stop_stage == 3) return;
 +#endif
+
+diff --git a/dlls/ntdll/unix/env.c b/dlls/ntdll/unix/env.c
+--- a/dlls/ntdll/unix/env.c
++++ b/dlls/ntdll/unix/env.c
+@@ -826,7 +826,15 @@ void init_environment(void)
+     USHORT *case_table;
+
+     init_unix_codepage();
++#if defined(__APPLE__) && defined(__MACH__)
++    /*
++     * Device bring-up probe: stop after the first real environment
++     * initialization slice so iOS failures can be localized without
++     * changing normal Wine behavior when WIOS_ENV_PROBE is unset.
++     */
++    if (getenv( "WIOS_ENV_PROBE" ) &&
++        !strcmp( getenv( "WIOS_ENV_PROBE" ), "codepage" )) return;
++#endif
+     init_locale();
+
+     if ((case_table = read_nls_file( "l_intl.nls" )))

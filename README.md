@@ -87,7 +87,7 @@ probe stop
 当前 **不声称**已经可以运行 Windows 应用。
 
 ```text
-init_environment                    NOT RUN
+init_environment                    IN PROGRESS (device probe)
 Apple main-thread transition        NOT RUN
 start_main_thread                   NOT RUN
 server_init_process                 NOT RUN
@@ -153,7 +153,7 @@ CI 成功只证明构建链成立。真正的运行状态必须以 iPhone 真机
 
 ## 下一道门
 
-下一阶段只推进一件事：**从已经通过的 `virtual_init()` 继续进入 `init_environment()`，仍然不启动 `hello.exe`。**
+下一阶段只推进 `init_environment()` 内部的第一个子阶段 `init_unix_codepage()`，仍然不启动 `hello.exe`。
 
 目标探针：
 
@@ -161,14 +161,17 @@ CI 成功只证明构建链成立。真正的运行状态必须以 iPhone 真机
 WINE_MAIN_ENTER=PASS
 WINE_MAIN_PATH_INIT=PASS
 WINE_VIRTUAL_INIT=PASS
-WINE_ENV_INIT=PASS / FAIL_AT=<exact stage>
+WINE_ENV_CODEPAGE=PASS / device crash before return
+WINE_ENV_LOCALE=NOT_RUN
+WINE_ENV_CASE_TABLE=NOT_RUN
+WINE_ENV_INIT=PARTIAL
 WINE_MAIN_THREAD_INIT=NOT_RUN
 WINDOWS_ARM64_HELLO=NOT_RUN
 ```
 
 如果失败，必须把失败点定位到具体初始化阶段，而不是一次加入大量补丁。
 
-只有 `init_environment()` 稳定后，才继续推进后续主线程初始化。
+只有 `init_unix_codepage()`、`init_locale()` 和 NLS case-table 初始化逐段通过后，才把 `init_environment()` 标记为 PASS，再继续后续主线程初始化。
 
 ## 开发原则
 
