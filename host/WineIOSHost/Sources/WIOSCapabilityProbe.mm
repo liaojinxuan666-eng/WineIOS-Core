@@ -3,6 +3,10 @@
 
 #include <errno.h>
 #include <libkern/OSCacheControl.h>
+#include <mach/mach.h>
+#include <mach/mach_vm.h>
+#include <mach-o/dyld.h>
+#include <mach-o/loader.h>
 #include <pthread.h>
 #include <string.h>
 #include <sys/mman.h>
@@ -15,6 +19,110 @@ static void LogResult(NSString *key, BOOL passed, NSString *detail)
     NSString *value = passed ? @"PASS" : @"FAIL";
     if (detail.length) value = [value stringByAppendingFormat:@" (%@)", detail];
     [[WIOSLog shared] appendLevel:passed ? @"INFO" : @"ERROR" key:key value:value];
+}
+
+
+static void WIOSProbeSharedUserDataAddress(void)
+{
+    WIOSLog *log = [WIOSLog shared];
+    const mach_vm_address_t target = 0x000000007ffe0000ULL;
+
+    /* Read-only inspection of the main executable's Mach-O load commands. */
+    const struct mach_header *header = _dyld_get_image_header(0);
+    BOOL foundPageZero = NO;
+
+    if (header && header->magic == MH_MAGIC_64) {
+        const struct mach_header_64 *header64 =
+            reinterpret_cast<const struct mach_header_64 *>(header);
+        const uint8_t *cursor =
+            reinterpret_cast<const uint8_t *>(header64 + 1);
+
+        for (uint32_t i = 0; i < header64->ncmds; ++i) {
+            const struct load_command *command =
+                reinterpret_cast<const struct load_command *>(cursor);
+
+            if (command->cmdsize < sizeof(struct load_command)) break;
+
+            if (command->cmd == LC_SEGMENT_64 &&
+                command->cmdsize >= sizeof(struct segment_command_64)) {
+                const struct segment_command_64 *segment =
+                    reinterpret_cast<const struct segment_command_64 *>(command);
+
+                if (strncmp(segment->segname, "__PAGEZERO",
+                            sizeof(segment->segname)) == 0) {
+                    foundPageZero = YES;
+                    BOOL containsTarget =
+                        target >= segment->vmaddr &&
+                        (target - segment->vmaddr) < segment->vmsize;
+
+                    [log appendLevel:@"INFO"
+                                  key:@"HOST_PAGEZERO"
+                                value:[NSString stringWithFormat:
+                                    @"start=0x%016llX size=0x%016llX contains_7FFE0000=%@",
+                                    (unsigned long long)segment->vmaddr,
+                                    (unsigned long long)segment->vmsize,
+                                    containsTarget ? @"YES" : @"NO"]];
+                    break;
+                }
+            }
+
+            cursor += command->cmdsize;
+        }
+    }
+
+    if (!foundPageZero) {
+        [log appendLevel:@"WARN" key:@"HOST_PAGEZERO" value:@"NOT_FOUND"];
+    }
+
+    /*
+     * mach_vm_region() is diagnostic only. If target lies in a hole, Darwin
+     * returns the next mapped region, so compare the returned range to target.
+     */
+    mach_vm_address_t regionAddress = target;
+    mach_vm_size_t regionSize = 0;
+    vm_region_basic_info_data_64_t info = {};
+    mach_msg_type_number_t infoCount = VM_REGION_BASIC_INFO_COUNT_64;
+    mach_port_t objectName = MACH_PORT_NULL;
+
+    kern_return_t kr = mach_vm_region(
+        mach_task_self(),
+        &regionAddress,
+        &regionSize,
+        VM_REGION_BASIC_INFO_64,
+        reinterpret_cast<vm_region_info_t>(&info),
+        &infoCount,
+        &objectName);
+
+    if (kr == KERN_SUCCESS) {
+        BOOL containsTarget =
+            regionAddress <= target &&
+            (target - regionAddress) < regionSize;
+
+        [log appendLevel:@"INFO"
+                      key:@"MACH_VM_7FFE0000"
+                    value:[NSString stringWithFormat:
+                        @"kr=%d start=0x%016llX size=0x%016llX contains=%@ "
+                         "prot=0x%X max=0x%X reserved=%d",
+                        kr,
+                        (unsigned long long)regionAddress,
+                        (unsigned long long)regionSize,
+                        containsTarget ? @"YES" : @"NO",
+                        info.protection,
+                        info.max_protection,
+                        info.reserved]];
+    } else {
+        [log appendLevel:@"WARN"
+                      key:@"MACH_VM_7FFE0000"
+                    value:[NSString stringWithFormat:@"kr=%d", kr]];
+    }
+
+    if (objectName != MACH_PORT_NULL) {
+        mach_port_deallocate(mach_task_self(), objectName);
+    }
+
+    [log appendLevel:@"INFO"
+                  key:@"MACH_VM_7FFE0000_MUTATION"
+                value:@"NOT_ATTEMPTED"];
 }
 
 typedef struct {
@@ -50,6 +158,8 @@ static void *WIOSThreadProbe(void *opaque)
                value:[NSString stringWithFormat:@"%ld", sysconf(_SC_PAGESIZE)]];
     [log appendLevel:@"INFO" key:@"PID"
                value:[NSString stringWithFormat:@"%d", getpid()]];
+
+    WIOSProbeSharedUserDataAddress();
 
     pthread_key_t key;
     int keyResult = pthread_key_create(&key, NULL);
