@@ -1,0 +1,303 @@
+checking build system type... aarch64-apple-darwin24.6.0
+checking host system type... aarch64-apple-ios
+checking for aarch64-apple-ios-gcc... /Applications/Xcode_16.4.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang -target arm64-apple-ios15.0 -isysroot /Applications/Xcode_16.4.app/Contents/Developer/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS18.5.sdk
+checking whether the C compiler works... yes
+checking for C compiler default output file name... a.out
+checking for suffix of executables... 
+checking whether we are cross compiling... yes
+checking for suffix of object files... o
+checking whether the compiler supports GNU C... yes
+checking whether /Applications/Xcode_16.4.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang -target arm64-apple-ios15.0 -isysroot /Applications/Xcode_16.4.app/Contents/Developer/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS18.5.sdk accepts -g... yes
+checking for /Applications/Xcode_16.4.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang -target arm64-apple-ios15.0 -isysroot /Applications/Xcode_16.4.app/Contents/Developer/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS18.5.sdk option to enable C11 features... none needed
+checking whether the compiler supports GNU C++... yes
+checking whether /Applications/Xcode_16.4.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang++ -target arm64-apple-ios15.0 -isysroot /Applications/Xcode_16.4.app/Contents/Developer/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS18.5.sdk accepts -g... yes
+checking for /Applications/Xcode_16.4.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang++ -target arm64-apple-ios15.0 -isysroot /Applications/Xcode_16.4.app/Contents/Developer/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS18.5.sdk option to enable C++11 features... none needed
+checking for aarch64-apple-ios-cpp... no
+checking for cpp... cpp
+configure: WARNING: using cross tools not prefixed with host triplet
+checking for aarch64-apple-ios-ld... no
+checking for ld... ld
+checking for the directory containing the Wine tools... /Users/runner/work/WineIOS-Core/WineIOS-Core/build/wine-tools-macos
+checking for flex... flex
+checking whether flex is recent enough... yes
+checking for bison... bison
+checking whether bison is recent enough... yes
+checking for aarch64-apple-ios-strip... no
+checking for strip... strip
+checking whether ln -s works... yes
+checking for aarch64-apple-ios-pkg-config... no
+checking whether aarch64-w64-mingw32-clang supports -fuse-ld=lld -target aarch64-w64-mingw32 --no-default-config... yes
+checking for aarch64-w64-mingw32-clang option to enable C99 features... none needed
+checking whether aarch64-w64-mingw32-clang supports SEH directives... yes
+checking whether aarch64-w64-mingw32-clang supports -fno-strict-aliasing... yes
+checking whether aarch64-w64-mingw32-clang supports -Werror=unknown-warning-option... yes
+checking whether aarch64-w64-mingw32-clang supports -Werror=unused-command-line-argument... yes
+checking whether aarch64-w64-mingw32-clang supports -Werror=ignored-optimization-argument... yes
+checking whether aarch64-w64-mingw32-clang supports -Werror=unsupported-floating-point-opt... yes
+checking whether aarch64-w64-mingw32-clang supports -Wdeclaration-after-statement... yes
+checking whether aarch64-w64-mingw32-clang supports -Wempty-body... yes
+checking whether aarch64-w64-mingw32-clang supports -Wignored-qualifiers... yes
+checking whether aarch64-w64-mingw32-clang supports -Winit-self... yes
+checking whether aarch64-w64-mingw32-clang supports -Wpacked-not-aligned... no
+checking whether aarch64-w64-mingw32-clang supports -Wmicrosoft-enum-forward-reference... yes
+checking whether aarch64-w64-mingw32-clang supports -Wshift-overflow=2... no
+checking whether aarch64-w64-mingw32-clang supports -Wstrict-prototypes... yes
+checking whether aarch64-w64-mingw32-clang supports -Wtype-limits... yes
+checking whether aarch64-w64-mingw32-clang supports -Wunused-but-set-parameter... yes
+checking whether aarch64-w64-mingw32-clang supports -Wvla... yes
+checking whether aarch64-w64-mingw32-clang supports -Wwrite-strings... yes
+checking whether aarch64-w64-mingw32-clang supports -Wpointer-arith... yes
+checking whether aarch64-w64-mingw32-clang supports -Wlogical-op... no
+checking whether aarch64-w64-mingw32-clang supports -Wabsolute-value... yes
+checking whether aarch64-w64-mingw32-clang supports -Wenum-enum-conversion... yes
+checking whether aarch64-w64-mingw32-clang supports -ffunction-sections... yes
+checking whether aarch64-w64-mingw32-clang supports -fasync-exceptions -DMIN_CLANG_VERSION=19... no
+checking whether aarch64-w64-mingw32-clang supports -ffp-exception-behavior=maytrap... yes
+checking whether aarch64-w64-mingw32-clang supports -fms-hotpatch -DMIN_CLANG_VERSION=18... no
+checking whether aarch64-w64-mingw32-clang supports -flarge-source-files -Wmisleading-indentation... no
+checking whether aarch64-w64-mingw32-clang supports -Wl,-debug:dwarf... no
+checking whether aarch64-w64-mingw32-clang supports -gdwarf-4... yes
+checking for i386_set_ldt in -li386... no
+checking for -D_WINE_IOS_BUILD=1 option for large files... none needed
+checking for -D_WINE_IOS_BUILD=1 option for timestamps after 2038... none needed
+checking for stdio.h... yes
+checking for stdlib.h... yes
+checking for string.h... yes
+checking for inttypes.h... yes
+checking for stdint.h... yes
+checking for strings.h... yes
+checking for sys/stat.h... yes
+checking for sys/types.h... yes
+checking for unistd.h... yes
+checking for CL/cl.h... (cached) no
+checking for OpenCL/opencl.h... (cached) no
+checking for arpa/inet.h... yes
+checking for arpa/nameser.h... yes
+checking for asm/termbits.h... no
+checking for asm/types.h... no
+checking for asm/user.h... no
+checking for bluetooth/bluetooth.h... no
+checking for elf.h... no
+checking for gettext-po.h... no
+checking for link.h... no
+checking for linux/cdrom.h... no
+checking for linux/filter.h... no
+checking for linux/fs.h... no
+checking for linux/hdreg.h... no
+checking for linux/hidraw.h... no
+checking for linux/input.h... no
+checking for linux/ioctl.h... no
+checking for linux/major.h... no
+checking for linux/ntsync.h... no
+checking for linux/param.h... no
+checking for linux/serial.h... no
+checking for linux/types.h... no
+checking for linux/ucdrom.h... no
+checking for linux/userfaultfd.h... no
+checking for linux/wireless.h... no
+checking for lwp.h... no
+checking for mach-o/loader.h... yes
+checking for mach/mach.h... yes
+checking for machine/cpu.h... no
+checking for machine/sysarch.h... no
+checking for mntent.h... no
+checking for netdb.h... yes
+checking for netinet/in.h... yes
+checking for netinet/in_systm.h... yes
+checking for netinet/tcp.h... yes
+checking for netinet/tcp_fsm.h... no
+checking for pcap/pcap.h... (cached) no
+checking for port.h... no
+checking for pwd.h... yes
+checking for sched.h... yes
+checking for scsi/scsi.h... no
+checking for scsi/scsi_ioctl.h... no
+checking for scsi/sg.h... no
+checking for sys/attr.h... yes
+checking for sys/auxv.h... no
+checking for sys/cdio.h... no
+checking for sys/epoll.h... no
+checking for sys/event.h... yes
+checking for sys/extattr.h... no
+checking for sys/filio.h... yes
+checking for sys/ipc.h... yes
+checking for sys/link.h... no
+checking for sys/modem.h... no
+checking for sys/mtio.h... no
+checking for sys/param.h... yes
+checking for sys/prctl.h... no
+checking for sys/ptrace.h... no
+checking for sys/queue.h... yes
+checking for sys/random.h... no
+checking for sys/resource.h... yes
+checking for sys/scsiio.h... no
+checking for sys/shm.h... yes
+checking for sys/signal.h... yes
+checking for sys/socketvar.h... yes
+checking for sys/sockio.h... yes
+checking for sys/statvfs.h... yes
+checking for sys/strtio.h... no
+checking for sys/syscall.h... yes
+checking for sys/sysinfo.h... no
+checking for sys/times.h... yes
+checking for sys/uio.h... yes
+checking for sys/user.h... no
+checking for sys/utsname.h... yes
+checking for sys/vnode.h... no
+checking for sys/xattr.h... yes
+checking for syscall.h... no
+checking for utime.h... yes
+checking for valgrind/memcheck.h... no
+checking for valgrind/valgrind.h... no
+checking for sys/mkdev.h... no
+checking for sys/sysmacros.h... no
+checking for sys/conf.h... no
+checking for sys/mount.h... yes
+checking for sys/statfs.h... no
+checking for sys/user.h... (cached) no
+checking for sys/vfs.h... no
+checking for sys/sysctl.h... yes
+checking for netinet/ip.h... yes
+checking for net/if.h... yes
+checking for net/if_arp.h... no
+checking for net/if_dl.h... yes
+checking for net/if_types.h... yes
+checking for net/route.h... no
+checking for netinet/if_ether.h... no
+checking for netinet/in_pcb.h... yes
+checking for netinet/ip_icmp.h... yes
+checking for netinet/ip_var.h... no
+checking for netinet/udp.h... yes
+checking for netinet6/ip6_var.h... no
+checking for netipx/ipx.h... no
+checking for sys/un.h... yes
+checking for netinet/udp_var.h... no
+checking for netinet/icmp_var.h... no
+checking for netinet/icmp6.h... yes
+checking for netinet/tcp_var.h... yes
+checking for linux/ipx.h... no
+checking for linux/irda.h... no
+checking for linux/rtnetlink.h... no
+checking for resolv.h... yes
+checking for ifaddrs.h... yes
+checking for sys/ucontext.h... yes
+checking for sys/thr.h... no
+checking for pthread_np.h... no
+checking for linux/videodev2.h... no
+checking for libprocstat.h... no
+checking for bluetooth/rfcomm.h... no
+checking whether getxattr takes additional arguments... yes
+checking for ldd... true
+checking for aarch64-apple-ios-otool... no
+checking for otool... otool
+checking for aarch64-apple-ios-readelf... no
+checking for readelf... no
+checking for pthread_create... yes
+checking how to run the C preprocessor... /Applications/Xcode_16.4.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang -target arm64-apple-ios15.0 -isysroot /Applications/Xcode_16.4.app/Contents/Developer/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS18.5.sdk -E
+checking for X... disabled
+checking for resolver library... -lresolv
+checking for res_getservers... yes
+checking for pthread_getthreadid_np... no
+checking for -lodbc... not found
+checking whether the compiler supports -Werror=unknown-warning-option... yes
+checking whether the compiler supports -Werror=unused-command-line-argument... yes
+checking whether the compiler supports -Werror=ignored-optimization-argument... yes
+checking whether the compiler supports -fcf-protection=none... yes
+checking whether the compiler supports -fvisibility=hidden... yes
+checking whether the compiler supports -fno-stack-protector... yes
+checking whether the compiler supports -fno-strict-aliasing... yes
+checking whether the compiler supports -Wdeclaration-after-statement... yes
+checking whether the compiler supports -Wempty-body... yes
+checking whether the compiler supports -Wignored-qualifiers... yes
+checking whether the compiler supports -Winit-self... yes
+checking whether the compiler supports -Wlogical-op... no
+checking whether the compiler supports -Wpacked-not-aligned... no
+checking whether the compiler supports -Wpointer-arith... yes
+checking whether the compiler supports -Wshift-overflow=2... no
+checking whether the compiler supports -Wstrict-prototypes... yes
+checking whether the compiler supports -Wtype-limits... yes
+checking whether the compiler supports -Wunused-but-set-parameter... yes
+checking whether the compiler supports -Wvla... yes
+checking whether the compiler supports -Wwrite-strings... yes
+checking whether the compiler supports -flarge-source-files -Wmisleading-indentation... no
+checking for flags needed for 64-bit compare-and-swap support... none needed
+checking whether the compiler supports -fno-builtin... yes
+checking whether the compiler supports -fshort-wchar... yes
+checking whether the compiler supports -Wno-format... yes
+checking for the need to disable Fortify... yes
+checking whether CFI directives are supported in assembly code... yes
+checking for library containing dlopen... none required
+checking for dladdr1... no
+checking for dlinfo... no
+checking for epoll_create... no
+checking for epoll_pwait2... no
+checking for fstatfs... yes
+checking for futimens... yes
+checking for futimes... yes
+checking for futimesat... no
+checking for getaddrinfo... yes
+checking for getattrlist... yes
+checking for getauxval... no
+checking for getifaddrs... yes
+checking for getrandom... no
+checking for kqueue... yes
+checking for pipe2... no
+checking for port_create... no
+checking for posix_fadvise... no
+checking for posix_fallocate... no
+checking for prctl... no
+checking for process_vm_readv... no
+checking for process_vm_writev... no
+checking for sched_getcpu... no
+checking for sched_yield... yes
+checking for setproctitle... no
+checking for setprogname... yes
+checking for sigprocmask... yes
+checking for sysinfo... no
+checking for tcdrain... yes
+checking for thr_kill2... no
+checking for library containing clock_gettime... none required
+checking for sched_setaffinity... no
+checking whether we can use re-entrant gethostbyname_r Linux style... no
+checking for struct sockaddr_un.sun_len... yes
+checking for sg_io_hdr_t.interface_id... no
+checking for siginfo_t.si_fd... no
+checking for struct mtget.mt_blksiz... no
+checking for struct mtget.mt_gstat... no
+checking for struct mtget.mt_blkno... no
+checking for struct stat.st_mtim... no
+checking for struct stat.st_mtimespec... yes
+checking for struct stat.st_ctim... no
+checking for struct stat.st_ctimespec... yes
+checking for struct stat.st_atim... no
+checking for struct stat.st_atimespec... yes
+checking for struct stat.st_birthtime... yes
+checking for struct stat.st_birthtim... no
+checking for struct stat.st_birthtimespec... yes
+checking for struct stat.__st_birthtime... no
+checking for struct stat.__st_birthtim... no
+checking for struct sockaddr_in6.sin6_scope_id... yes
+checking for struct __res_state._u._ext.nscount6... no
+checking for struct in6_pktinfo.ipi6_addr... yes
+checking for struct ipstat.ips_total... no
+checking for struct ip_stats.ips_total... no
+checking for struct ip6stat.ip6s_total... no
+checking for struct icmpstat.icps_error... no
+checking for struct icmp6stat.icp6s_error... yes
+checking for struct tcpstat.tcps_connattempt... yes
+checking for struct tcp_stats.tcps_connattempt... no
+checking for struct udpstat.udps_ipackets... no
+checking for struct ifreq.ifr_hwaddr... no
+checking for struct sysinfo.totalram... no
+checking for struct sysinfo.mem_unit... no
+checking for __builtin_popcount... yes
+checking for __clear_cache... no
+checking whether we need to define __aarch64__... no
+creating Makefile rules... done
+configure: creating ./config.status
+config.status: creating include/config.h
+config.status: executing include/stamp-h commands
+config.status: executing Makefile commands
+
+configure: Finished.  Do 'make' to compile Wine.
+

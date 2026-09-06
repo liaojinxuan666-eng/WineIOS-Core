@@ -1,0 +1,14 @@
+PROBE=START
+STEP=fetch-wine
+STEP=build-host-tools
+STEP=apply-ios-patches
+STEP=fetch-arm64-pe-toolchain
+STEP=configure-ios-arm64
+STEP=compile-ntdll-unix
+STEP=compile-wineserver
+STEP=compile-windows-arm64-core-pe
+STEP=compile-wine-loader
+STEP=compile-arm64-hello
+STEP=package-ios-runtime
+STEP=build-runtime-host
+PROBE=FAIL STATUS=1 LINE=164 COMMAND=tee "$LOG_ROOT/wine-ios-runtime-host-build.log"

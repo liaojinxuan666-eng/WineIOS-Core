@@ -110,35 +110,15 @@ static void *WIOSThreadProbe(void *opaque)
 
 + (void)runJITExecutionProbe
 {
-    WIOSLog *log = [WIOSLog shared];
-    [log appendLevel:@"WARN" key:@"JIT_EXEC" value:@"STARTED"];
-
-#if defined(__aarch64__) && defined(MAP_JIT)
-    size_t pageSize = (size_t)sysconf(_SC_PAGESIZE);
-    errno = 0;
-    void *page = mmap(NULL, pageSize, PROT_READ | PROT_WRITE | PROT_EXEC,
-                      MAP_PRIVATE | MAP_ANON | MAP_JIT, -1, 0);
-    if (page == MAP_FAILED) {
-        [log appendLevel:@"ERROR" key:@"JIT_EXEC"
-                   value:[NSString stringWithFormat:@"MAP_FAILED (errno=%d: %s)", errno, strerror(errno)]];
-        return;
-    }
-
-    const uint8_t return42[] = {0x40, 0x05, 0x80, 0x52, 0xC0, 0x03, 0x5F, 0xD6};
-    if (@available(iOS 14.0, *)) pthread_jit_write_protect_np(0);
-    memcpy(page, return42, sizeof(return42));
-    sys_icache_invalidate(page, sizeof(return42));
-    if (@available(iOS 14.0, *)) pthread_jit_write_protect_np(1);
-
-    typedef int (*ProbeFunction)(void);
-    ProbeFunction function = reinterpret_cast<ProbeFunction>(page);
-    int result = function();
-    munmap(page, pageSize);
-    LogResult(@"JIT_EXEC", result == 42,
-              [NSString stringWithFormat:@"return=%d", result]);
-#else
-    [log appendLevel:@"ERROR" key:@"JIT_EXEC" value:@"UNSUPPORTED_BUILD"];
-#endif
+    /*
+     * pthread_jit_write_protect_np() is explicitly unavailable when compiling
+     * against the iPhoneOS SDK. JIT is not part of the current Arcadia Wine
+     * runtime bring-up gate, so keep the public probe entry point but do not
+     * compile or execute a JIT test here.
+     */
+    [[WIOSLog shared] appendLevel:@"INFO"
+                              key:@"JIT_EXEC"
+                            value:@"SKIPPED (not required for current Wine runtime bring-up)"];
 }
 
 @end
