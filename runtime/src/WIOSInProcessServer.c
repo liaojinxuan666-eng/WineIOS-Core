@@ -3,14 +3,20 @@
 #include <errno.h>
 #include <pthread.h>
 #include <stdint.h>
+#include <stddef.h>
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
 
+#include "wine/server_protocol.h"
+
+#define WIOS_STATUS_NOT_IMPLEMENTED 0xC0000002u
+
 enum
 {
     WIOS_REQUEST_NONE = 0,
-    WIOS_REQUEST_PING = 1
+    WIOS_REQUEST_PING = 1,
+    WIOS_REQUEST_WINE_PROTOCOL = 2
 };
 
 typedef struct
@@ -30,6 +36,9 @@ typedef struct
     int request_kind;
     int response_code;
 
+    union generic_request wine_request;
+    union generic_reply wine_reply;
+
     wios_log_callback log_callback;
     void *log_context;
 
@@ -40,6 +49,20 @@ static wios_inproc_server_state server = {
     PTHREAD_MUTEX_INITIALIZER,
     PTHREAD_COND_INITIALIZER
 };
+
+/*
+ * These are intentional ABI gates.  If the pinned Wine baseline changes its
+ * wire layout, Arcadia must notice at compile time instead of silently
+ * corrupting request/reply frames.
+ */
+_Static_assert(sizeof(struct request_header) == 12,
+               "unexpected Wine request_header size");
+_Static_assert(sizeof(struct reply_header) == 8,
+               "unexpected Wine reply_header size");
+_Static_assert(offsetof(struct close_handle_request, handle) == 12,
+               "unexpected close_handle_request.handle offset");
+_Static_assert(sizeof(struct close_handle_request) == 16,
+               "unexpected close_handle_request size");
 
 static void set_error(const char *text)
 {
@@ -66,6 +89,14 @@ static void log_line(const char *line)
     if (callback) callback(context, line);
 }
 
+static void log_protocol_version(void)
+{
+    char line[128];
+    snprintf(line, sizeof(line), "WINE_SERVER_PROTOCOL_VERSION=%u",
+             (unsigned int)SERVER_PROTOCOL_VERSION);
+    log_line(line);
+}
+
 static struct timespec deadline_after_ms(long milliseconds)
 {
     struct timespec deadline;
@@ -79,6 +110,40 @@ static struct timespec deadline_after_ms(long milliseconds)
         deadline.tv_nsec -= 1000000000L;
     }
     return deadline;
+}
+
+static void handle_wine_protocol_frame(void)
+{
+    const struct request_header *header = &server.wine_request.request_header;
+    struct reply_header *reply = &server.wine_reply.reply_header;
+
+    memset(&server.wine_reply, 0, sizeof(server.wine_reply));
+
+    if (header->req < 0 || header->req >= REQ_NB_REQUESTS)
+    {
+        reply->error = WIOS_STATUS_NOT_IMPLEMENTED;
+        reply->reply_size = 0;
+        server.response_code = -2;
+        return;
+    }
+
+    /*
+     * Phase 2 deliberately recognizes a real Wine request number and returns
+     * a real Wine reply_header.  The existing Wine object/handle core has not
+     * been attached yet, so close_handle is expected to return
+     * STATUS_NOT_IMPLEMENTED here.
+     */
+    if (header->req == REQ_close_handle)
+    {
+        reply->error = WIOS_STATUS_NOT_IMPLEMENTED;
+        reply->reply_size = 0;
+        server.response_code = 0;
+        return;
+    }
+
+    reply->error = WIOS_STATUS_NOT_IMPLEMENTED;
+    reply->reply_size = 0;
+    server.response_code = -3;
 }
 
 static void *server_thread_main(void *opaque)
@@ -105,12 +170,15 @@ static void *server_thread_main(void *opaque)
         seq = server.request_seq;
         kind = server.request_kind;
 
-        /*
-         * Phase 1 deliberately has one tiny request.  The synchronization,
-         * sequencing and thread ownership are the parts under test here.
-         * Wine's request handlers are attached in the next phase.
-         */
-        if (kind == WIOS_REQUEST_PING) response = 0;
+        if (kind == WIOS_REQUEST_PING)
+        {
+            response = 0;
+        }
+        else if (kind == WIOS_REQUEST_WINE_PROTOCOL)
+        {
+            handle_wine_protocol_frame();
+            response = server.response_code;
+        }
 
         handled_seq = seq;
         server.response_code = response;
@@ -149,6 +217,8 @@ int wios_inproc_server_start(wios_log_callback log_callback, void *log_context)
     server.response_seq = 0;
     server.request_kind = WIOS_REQUEST_NONE;
     server.response_code = -1;
+    memset(&server.wine_request, 0, sizeof(server.wine_request));
+    memset(&server.wine_reply, 0, sizeof(server.wine_reply));
     server.log_callback = log_callback;
     server.log_context = log_context;
     server.last_error[0] = '\0';
@@ -209,29 +279,24 @@ int wios_inproc_server_start(wios_log_callback log_callback, void *log_context)
     pthread_mutex_unlock(&server.mutex);
 
     log_line("INPROC_SERVER_READY=PASS");
-    log_line("INPROC_SERVER_CORE=HARNESS_ONLY");
+    log_line("INPROC_SERVER_CORE=PROTOCOL_BRIDGE_PHASE");
     return 0;
 }
 
-int wios_inproc_server_ping(void)
+static int submit_request_and_wait(int kind, uint64_t *seq_out)
 {
     struct timespec deadline;
     uint64_t seq;
     int result;
-    int response;
-
-    pthread_mutex_lock(&server.mutex);
 
     if (!server.running || !server.ready)
     {
         set_error("in-process server is not ready");
-        pthread_mutex_unlock(&server.mutex);
-        log_line("INPROC_SERVER_ROUNDTRIP=FAIL");
         return -1;
     }
 
     seq = ++server.request_seq;
-    server.request_kind = WIOS_REQUEST_PING;
+    server.request_kind = kind;
     pthread_cond_broadcast(&server.cond);
 
     deadline = deadline_after_ms(2000);
@@ -242,15 +307,11 @@ int wios_inproc_server_ping(void)
         if (result == ETIMEDOUT)
         {
             set_error("in-process server request timed out");
-            pthread_mutex_unlock(&server.mutex);
-            log_line("INPROC_SERVER_ROUNDTRIP=FAIL");
             return -2;
         }
         if (result != 0)
         {
             set_pthread_error("pthread_cond_timedwait(request)", result);
-            pthread_mutex_unlock(&server.mutex);
-            log_line("INPROC_SERVER_ROUNDTRIP=FAIL");
             return -3;
         }
     }
@@ -258,22 +319,83 @@ int wios_inproc_server_ping(void)
     if (server.response_seq < seq)
     {
         set_error("in-process server stopped before replying");
-        pthread_mutex_unlock(&server.mutex);
-        log_line("INPROC_SERVER_ROUNDTRIP=FAIL");
         return -4;
     }
 
-    response = server.response_code;
+    if (seq_out) *seq_out = seq;
+    return server.response_code;
+}
+
+int wios_inproc_server_ping(void)
+{
+    int response;
+
+    pthread_mutex_lock(&server.mutex);
+    response = submit_request_and_wait(WIOS_REQUEST_PING, NULL);
     pthread_mutex_unlock(&server.mutex);
 
     if (response != 0)
     {
-        set_error("in-process server returned an unexpected response");
         log_line("INPROC_SERVER_ROUNDTRIP=FAIL");
-        return -5;
+        return -1;
     }
 
     log_line("INPROC_SERVER_ROUNDTRIP=PASS");
+    return 0;
+}
+
+int wios_inproc_server_probe_wine_protocol(void)
+{
+    struct close_handle_request *request;
+    struct reply_header reply;
+    int response;
+
+    pthread_mutex_lock(&server.mutex);
+
+    if (!server.running || !server.ready)
+    {
+        set_error("in-process server is not ready");
+        pthread_mutex_unlock(&server.mutex);
+        log_line("WINE_SERVER_PROTOCOL_FRAME=FAIL");
+        return -1;
+    }
+
+    memset(&server.wine_request, 0, sizeof(server.wine_request));
+    memset(&server.wine_reply, 0, sizeof(server.wine_reply));
+
+    request = &server.wine_request.close_handle_request;
+    request->__header.req = REQ_close_handle;
+    request->__header.request_size = 0;
+    request->__header.reply_size = 0;
+    request->handle = 0;
+
+    response = submit_request_and_wait(WIOS_REQUEST_WINE_PROTOCOL, NULL);
+    reply = server.wine_reply.reply_header;
+
+    pthread_mutex_unlock(&server.mutex);
+
+    log_protocol_version();
+    log_line("WINE_SERVER_PROTOCOL_ABI=PASS");
+
+    if (response != 0)
+    {
+        set_error("Wine protocol bridge rejected close_handle frame");
+        log_line("WINE_SERVER_PROTOCOL_FRAME=FAIL");
+        return -2;
+    }
+
+    log_line("WINE_SERVER_PROTOCOL_FRAME=PASS");
+
+    if (reply.error != WIOS_STATUS_NOT_IMPLEMENTED || reply.reply_size != 0)
+    {
+        set_error("Wine protocol bridge returned unexpected reply header");
+        log_line("WINE_SERVER_PROTOCOL_REPLY=FAIL");
+        return -3;
+    }
+
+    log_line("WINE_SERVER_PROTOCOL_REPLY=PASS");
+    log_line("WINE_SERVER_HANDLERS=NOT_ATTACHED");
+    log_line("INPROC_SERVER_PROTOCOL_BRIDGE=PASS");
     return 0;
 }
 

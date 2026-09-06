@@ -7,20 +7,16 @@
 extern "C" {
 #endif
 
-/*
- * Phase-1 in-process server harness.
- *
- * This is intentionally not the Wine server core yet.  It validates the
- * architecture Arcadia needs on ordinary sandboxed iOS:
- *
- *   Wine client code <-> in-process request/reply transport <-> server thread
- *
- * Once this gate is stable, Wine's existing server protocol/object core can
- * be attached behind this transport without depending on posix_spawn().
- */
-
 int wios_inproc_server_start(wios_log_callback log_callback, void *log_context);
 int wios_inproc_server_ping(void);
+
+/*
+ * Sends one real Wine server-protocol frame through Arcadia's in-process
+ * transport.  Phase 2 validates Wine's generated protocol ABI; Wine's real
+ * object/handle handlers are attached in later phases.
+ */
+int wios_inproc_server_probe_wine_protocol(void);
+
 void wios_inproc_server_stop(void);
 const char *wios_inproc_server_last_error(void);
 

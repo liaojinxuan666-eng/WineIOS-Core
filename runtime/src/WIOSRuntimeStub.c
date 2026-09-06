@@ -153,11 +153,6 @@ static int runtime_initialize(const wios_runtime_config *config)
     runtime_log(config, "WINE_MAIN_SYMBOL=PASS");
     runtime_log(config, "WINE_RUNTIME_BUNDLE_PROBE=PASS");
 
-    /*
-     * Ordinary iOS sandbox does not allow Arcadia to depend on spawning the
-     * traditional wineserver process.  Phase 1 validates a server thread and
-     * same-process request/reply transport instead.
-     */
     if (wios_inproc_server_start(config->log_callback, config->log_context) != 0)
     {
         server_error = wios_inproc_server_last_error();
@@ -176,6 +171,16 @@ static int runtime_initialize(const wios_runtime_config *config)
     }
 
     runtime_log(config, "INPROC_SERVER_TRANSPORT=PASS");
+
+    if (wios_inproc_server_probe_wine_protocol() != 0)
+    {
+        server_error = wios_inproc_server_last_error();
+        set_error(server_error && server_error[0] ? server_error :
+                  "Wine server protocol bridge probe failed");
+        wios_inproc_server_stop();
+        return -10;
+    }
+
     runtime_log(config, "HOST_RUNTIME_ARCHITECTURE=IN_PROCESS");
     return 0;
 }

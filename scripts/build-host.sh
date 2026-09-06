@@ -10,6 +10,7 @@ CLANG=$(xcrun --sdk iphoneos --find clang)
 CLANGXX=$(xcrun --sdk iphoneos --find clang++)
 BUILD_ROOT="$PROJECT_ROOT/build"
 WINE_BUILD="$BUILD_ROOT/wine-ios-arm64"
+WINE_SOURCE="$PROJECT_ROOT/third_party/wine"
 OBJECT_ROOT="$BUILD_ROOT/objects"
 APP_ROOT="$BUILD_ROOT/WineIOSHost.app"
 SOURCE_ROOT="$PROJECT_ROOT/host/WineIOSHost/Sources"
@@ -39,6 +40,7 @@ require_file "$KERNELBASE_DLL"
 require_file "$KERNEL32_DLL"
 require_file "$HELLO_EXE"
 require_file "$INPROC_SERVER_SOURCE"
+require_file "$WINE_SOURCE/include/wine/server_protocol.h"
 
 rm -rf "$OBJECT_ROOT" "$APP_ROOT"
 mkdir -p "$OBJECT_ROOT"
@@ -48,6 +50,7 @@ mkdir -p "$RUNTIME_ROOT/dlls/kernel32/aarch64-windows"
 mkdir -p "$RUNTIME_ROOT/hello"
 
 COMMON_FLAGS="-arch arm64 -isysroot $SDK_PATH -miphoneos-version-min=$WIOS_MIN_IOS -fobjc-arc -fmodules -Os"
+WINE_NATIVE_FLAGS="-I$WINE_SOURCE/include -fms-extensions"
 
 "$CLANG" $COMMON_FLAGS -I"$SOURCE_ROOT" -I"$PROJECT_ROOT/runtime/include" \
     -c "$SOURCE_ROOT/main.m" -o "$OBJECT_ROOT/main.o"
@@ -61,7 +64,7 @@ COMMON_FLAGS="-arch arm64 -isysroot $SDK_PATH -miphoneos-version-min=$WIOS_MIN_I
     -c "$SOURCE_ROOT/WIOSViewController.mm" -o "$OBJECT_ROOT/WIOSViewController.o"
 "$CLANG" $COMMON_FLAGS -I"$PROJECT_ROOT/runtime/include" \
     -c "$RUNTIME_SOURCE" -o "$OBJECT_ROOT/WIOSRuntime.o"
-"$CLANG" $COMMON_FLAGS -I"$PROJECT_ROOT/runtime/include" \
+"$CLANG" $COMMON_FLAGS $WINE_NATIVE_FLAGS -I"$PROJECT_ROOT/runtime/include" \
     -c "$INPROC_SERVER_SOURCE" -o "$OBJECT_ROOT/WIOSInProcessServer.o"
 
 "$CLANGXX" -arch arm64 -isysroot "$SDK_PATH" -miphoneos-version-min="$WIOS_MIN_IOS" \
@@ -82,9 +85,6 @@ sed \
     -e "s/\$(WIOS_MIN_IOS)/$WIOS_MIN_IOS/g" \
     "$RESOURCE_ROOT/Info.plist" > "$APP_ROOT/Info.plist"
 
-# The ordinary-iOS runtime no longer depends on bundled helper executables.
-# Keep Wine's ntdll build-tree path shape because __wine_main derives its
-# runtime root from .../dlls/ntdll/ntdll.so.
 cp -p "$NTDLL_SO" "$RUNTIME_ROOT/dlls/ntdll/ntdll.so"
 cp -p "$NTDLL_DLL" "$RUNTIME_ROOT/dlls/ntdll/aarch64-windows/ntdll.dll"
 cp -p "$KERNELBASE_DLL" "$RUNTIME_ROOT/dlls/kernelbase/aarch64-windows/kernelbase.dll"
@@ -101,11 +101,12 @@ mkdir -p "$BUILD_ROOT/logs"
     file "$RUNTIME_ROOT/dlls/ntdll/ntdll.so"
     file "$RUNTIME_ROOT/hello/hello.exe"
     echo "HOST_SERVER_MODEL=IN_PROCESS"
+    echo "WINE_PROTOCOL_HEADER=$WINE_SOURCE/include/wine/server_protocol.h"
+    echo "WINE_PROTOCOL_BRIDGE=COMPILED"
     echo "BUNDLED_WINESERVER=NO"
     echo "BUNDLED_WINE_LOADER=NO"
 } > "$LAYOUT_LOG"
 
-# Only the dylib loaded by the host is nested executable code now.
 codesign --force --sign - --timestamp=none \
     "$RUNTIME_ROOT/dlls/ntdll/ntdll.so"
 
@@ -115,6 +116,6 @@ codesign --force --sign - --timestamp=none \
 codesign --verify --deep --strict "$APP_ROOT"
 
 echo "Built $APP_ROOT"
-echo "Bundled Wine runtime root: $RUNTIME_ROOT"
 echo "Host server model: in-process"
+echo "Wine server protocol bridge: compiled"
 echo "Runtime layout log: $LAYOUT_LOG"
