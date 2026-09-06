@@ -2,7 +2,7 @@
 set -euo pipefail
 
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-PROJECT_ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)
+PROJECT_ROOT=$(CDPATH= cd -- "$SCRIPT_DIR" && pwd)
 WINE_SOURCE=${1:-"$PROJECT_ROOT/third_party/wine"}
 SERIES_FILE="$PROJECT_ROOT/patches/wine/series"
 
@@ -23,6 +23,7 @@ while IFS= read -r patch_name || [[ -n "$patch_name" ]]; do
     esac
     PATCHES+=("$patch_name")
 done < "$SERIES_FILE"
+
 APPLIED=()
 
 resolve_patch_path()
@@ -51,13 +52,12 @@ rollback()
 
 trap 'rollback' ERR INT TERM
 
+# Validate and apply in series order.  A later patch is allowed to depend on
+# changes made by an earlier patch.  Checking the entire series against the
+# pristine tree would incorrectly reject such dependent patches.
 for patch_name in "${PATCHES[@]}"; do
     patch_path=$(resolve_patch_path "$patch_name")
     git -C "$WINE_SOURCE" apply --check "$patch_path"
-done
-
-for patch_name in "${PATCHES[@]}"; do
-    patch_path=$(resolve_patch_path "$patch_name")
     git -C "$WINE_SOURCE" apply "$patch_path"
     APPLIED+=("$patch_path")
     echo "Applied $patch_name from ${patch_path#"$PROJECT_ROOT/"}"
