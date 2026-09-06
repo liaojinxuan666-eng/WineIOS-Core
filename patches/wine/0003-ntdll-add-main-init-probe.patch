@@ -1,10 +1,31 @@
+diff --git a/dlls/ntdll/unix/env.c b/dlls/ntdll/unix/env.c
+index d4c109b..7206240 100644
+--- a/dlls/ntdll/unix/env.c
++++ b/dlls/ntdll/unix/env.c
+@@ -826,6 +826,15 @@ void init_environment(void)
+     USHORT *case_table;
+ 
+     init_unix_codepage();
++#if defined(__APPLE__) && defined(__MACH__)
++    /*
++     * Device bring-up probe: stop after the first real environment
++     * initialization slice so iOS failures can be localized without
++     * changing normal Wine behavior when WIOS_ENV_PROBE is unset.
++     */
++    if (getenv( "WIOS_ENV_PROBE" ) &&
++        !strcmp( getenv( "WIOS_ENV_PROBE" ), "codepage" )) return;
++#endif
+     init_locale();
+ 
+     if ((case_table = read_nls_file( "l_intl.nls" )))
 diff --git a/dlls/ntdll/unix/loader.c b/dlls/ntdll/unix/loader.c
+index d081bfd..75e9a2b 100644
 --- a/dlls/ntdll/unix/loader.c
 +++ b/dlls/ntdll/unix/loader.c
-@@ -193,6 +193,16 @@ const char *user_name = NULL;
+@@ -193,6 +193,16 @@ const char **system_dll_paths = NULL;
  const char *user_name = NULL;
  SECTION_IMAGE_INFORMATION main_image_info = { NULL };
-
+ 
 +#if defined(__APPLE__) && defined(__MACH__)
 +static unsigned int wios_main_probe_stop_stage;
 +
@@ -20,7 +41,7 @@ diff --git a/dlls/ntdll/unix/loader.c b/dlls/ntdll/unix/loader.c
  {
 @@ -2281,6 +2291,11 @@ DECLSPEC_EXPORT void __wine_main( int argc, char *argv[] )
      main_argv = argv;
-
+ 
      init_paths();
 +#if defined(__APPLE__) && defined(__MACH__)
 +    /* Stage 1 proves the real __wine_main entry and path setup. */
@@ -29,10 +50,10 @@ diff --git a/dlls/ntdll/unix/loader.c b/dlls/ntdll/unix/loader.c
 +
      if (!getenv( "WINELOADERNOEXEC" ) || argc <= 1) check_command_line( argc, argv );
      unsetenv( "WINELOADERNOEXEC" );
-
-@@ -2295,4 +2310,9 @@ DECLSPEC_EXPORT void __wine_main( int argc, char *argv[] )
+ 
+@@ -2295,7 +2310,17 @@ DECLSPEC_EXPORT void __wine_main( int argc, char *argv[] )
  #endif
-
+ 
      virtual_init();
 +#if defined(__APPLE__) && defined(__MACH__)
 +    /* Stage 2 proves Wine virtual address-space initialization. */
@@ -44,23 +65,7 @@ diff --git a/dlls/ntdll/unix/loader.c b/dlls/ntdll/unix/loader.c
 +    /* Stage 3 returns after the selected environment probe slice. */
 +    if (wios_main_probe_stop_stage == 3) return;
 +#endif
-
-diff --git a/dlls/ntdll/unix/env.c b/dlls/ntdll/unix/env.c
---- a/dlls/ntdll/unix/env.c
-+++ b/dlls/ntdll/unix/env.c
-@@ -826,7 +826,15 @@ void init_environment(void)
-     USHORT *case_table;
-
-     init_unix_codepage();
-+#if defined(__APPLE__) && defined(__MACH__)
-+    /*
-+     * Device bring-up probe: stop after the first real environment
-+     * initialization slice so iOS failures can be localized without
-+     * changing normal Wine behavior when WIOS_ENV_PROBE is unset.
-+     */
-+    if (getenv( "WIOS_ENV_PROBE" ) &&
-+        !strcmp( getenv( "WIOS_ENV_PROBE" ), "codepage" )) return;
-+#endif
-     init_locale();
-
-     if ((case_table = read_nls_file( "l_intl.nls" )))
++
+ 
+ #ifdef __APPLE__
+     apple_main_thread();
