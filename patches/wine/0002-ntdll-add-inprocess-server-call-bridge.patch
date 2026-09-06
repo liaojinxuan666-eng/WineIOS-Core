@@ -1,7 +1,7 @@
 diff --git a/dlls/ntdll/unix/server.c b/dlls/ntdll/unix/server.c
 --- a/dlls/ntdll/unix/server.c
 +++ b/dlls/ntdll/unix/server.c
-@@ -105,6 +105,20 @@ timeout_t server_start_time = 0;  /* time of server startup */
+@@ -105,9 +105,21 @@ timeout_t server_start_time = 0;  /* time of server startup */
  sigset_t server_block_set;  /* signals to block during server calls */
  static int fd_socket = -1;  /* socket to exchange file descriptors with the server */
  static int initial_cwd = -1;
@@ -23,7 +23,7 @@ diff --git a/dlls/ntdll/unix/server.c b/dlls/ntdll/unix/server.c
  /* atomically exchange a 64-bit value */
  static inline LONG64 interlocked_xchg64( LONG64 *dest, LONG64 val )
  {
-@@ -303,6 +317,10 @@ unsigned int CDECL wine_server_call( void *req_ptr )
+@@ -303,6 +315,10 @@ unsigned int CDECL wine_server_call( void *req_ptr )
      sigset_t old_set;
      unsigned int ret;
 
@@ -34,7 +34,7 @@ diff --git a/dlls/ntdll/unix/server.c b/dlls/ntdll/unix/server.c
      pthread_sigmask( SIG_BLOCK, &server_block_set, &old_set );
      ret = server_call_unlocked( req_ptr );
      pthread_sigmask( SIG_SETMASK, &old_set, NULL );
-@@ -310,6 +328,17 @@ unsigned int CDECL wine_server_call( void *req_ptr )
+@@ -310,6 +326,18 @@ unsigned int CDECL wine_server_call( void *req_ptr )
  }
 
 
