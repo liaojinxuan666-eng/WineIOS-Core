@@ -4,7 +4,7 @@
 #include <errno.h>
 #include <libkern/OSCacheControl.h>
 #include <mach/mach.h>
-#include <mach/mach_vm.h>
+#include <mach/vm_region.h>
 #include <mach-o/dyld.h>
 #include <mach-o/loader.h>
 #include <pthread.h>
@@ -25,7 +25,7 @@ static void LogResult(NSString *key, BOOL passed, NSString *detail)
 static void WIOSProbeSharedUserDataAddress(void)
 {
     WIOSLog *log = [WIOSLog shared];
-    const mach_vm_address_t target = 0x000000007ffe0000ULL;
+    const vm_address_t target = (vm_address_t)0x000000007ffe0000ULL;
 
     /* Read-only inspection of the main executable's Mach-O load commands. */
     const struct mach_header *header = _dyld_get_image_header(0);
@@ -75,16 +75,16 @@ static void WIOSProbeSharedUserDataAddress(void)
     }
 
     /*
-     * mach_vm_region() is diagnostic only. If target lies in a hole, Darwin
+     * vm_region_64() is diagnostic only. If target lies in a hole, Darwin
      * returns the next mapped region, so compare the returned range to target.
      */
-    mach_vm_address_t regionAddress = target;
-    mach_vm_size_t regionSize = 0;
+    vm_address_t regionAddress = target;
+    vm_size_t regionSize = 0;
     vm_region_basic_info_data_64_t info = {};
     mach_msg_type_number_t infoCount = VM_REGION_BASIC_INFO_COUNT_64;
     mach_port_t objectName = MACH_PORT_NULL;
 
-    kern_return_t kr = mach_vm_region(
+    kern_return_t kr = vm_region_64(
         mach_task_self(),
         &regionAddress,
         &regionSize,
