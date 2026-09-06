@@ -17,7 +17,9 @@ SOURCE_ROOT="$PROJECT_ROOT/host/WineIOSHost/Sources"
 RESOURCE_ROOT="$PROJECT_ROOT/host/WineIOSHost/Resources"
 RUNTIME_SOURCE="$PROJECT_ROOT/runtime/src/WIOSRuntimeStub.c"
 INPROC_SERVER_SOURCE="$PROJECT_ROOT/runtime/src/WIOSInProcessServer.c"
+WINE_SERVER_CORE_ADAPTER_SOURCE="$PROJECT_ROOT/runtime/src/WIOSWineServerCoreAdapter.c"
 RUNTIME_ROOT="$APP_ROOT/Frameworks/WineRuntime"
+WINE_SERVER_CORE_DYLIB="$RUNTIME_ROOT/libWIOSWineServerCore.dylib"
 LAYOUT_LOG="$BUILD_ROOT/logs/wine-ios-runtime-host-layout.log"
 
 NTDLL_SO="$WINE_BUILD/dlls/ntdll/ntdll.so"
@@ -40,6 +42,7 @@ require_file "$KERNELBASE_DLL"
 require_file "$KERNEL32_DLL"
 require_file "$HELLO_EXE"
 require_file "$INPROC_SERVER_SOURCE"
+require_file "$WINE_SERVER_CORE_ADAPTER_SOURCE"
 require_file "$WINE_SOURCE/include/wine/server_protocol.h"
 
 rm -rf "$OBJECT_ROOT" "$APP_ROOT"
@@ -62,10 +65,44 @@ WINE_NATIVE_FLAGS="-D__WINESRC__ -I$WINE_SOURCE/include -fms-extensions"
     -c "$SOURCE_ROOT/WIOSCapabilityProbe.mm" -o "$OBJECT_ROOT/WIOSCapabilityProbe.o"
 "$CLANGXX" $COMMON_FLAGS -std=c++17 -I"$SOURCE_ROOT" -I"$PROJECT_ROOT/runtime/include" \
     -c "$SOURCE_ROOT/WIOSViewController.mm" -o "$OBJECT_ROOT/WIOSViewController.o"
-"$CLANG" $COMMON_FLAGS -I"$PROJECT_ROOT/runtime/include" \
+"$CLANG" $COMMON_FLAGS $WINE_NATIVE_FLAGS -I"$PROJECT_ROOT/runtime/include" \
     -c "$RUNTIME_SOURCE" -o "$OBJECT_ROOT/WIOSRuntime.o"
 "$CLANG" $COMMON_FLAGS $WINE_NATIVE_FLAGS -I"$PROJECT_ROOT/runtime/include" \
     -c "$INPROC_SERVER_SOURCE" -o "$OBJECT_ROOT/WIOSInProcessServer.o"
+"$CLANG" -arch arm64 -isysroot "$SDK_PATH" -miphoneos-version-min="$WIOS_MIN_IOS" \
+    $WINE_NATIVE_FLAGS \
+    -c "$WINE_SERVER_CORE_ADAPTER_SOURCE" \
+    -o "$OBJECT_ROOT/WIOSWineServerCoreAdapter.o"
+
+SERVER_OBJECT_LIST="$OBJECT_ROOT/wine-server-core-objects.txt"
+: > "$SERVER_OBJECT_LIST"
+SERVER_OBJECTS=""
+for obj in "$WINE_BUILD"/server/*.o; do
+    [ -f "$obj" ] || continue
+    [ "$(basename "$obj")" = "main.o" ] && continue
+    SERVER_OBJECTS="$SERVER_OBJECTS $obj"
+    printf '%s\n' "$obj" >> "$SERVER_OBJECT_LIST"
+done
+
+if [ ! -s "$SERVER_OBJECT_LIST" ]; then
+    echo "No Wine server core objects were found" >&2
+    exit 1
+fi
+
+# The exact same Wine server objects already passed the CI in-process core
+# link gate.  This build packages that real core for a harmless device dlopen
+# and ABI/symbol-resolution test; it does not execute req_close_handle yet.
+# shellcheck disable=SC2086
+"$CLANG" \
+    -arch arm64 \
+    -isysroot "$SDK_PATH" \
+    -miphoneos-version-min="$WIOS_MIN_IOS" \
+    -dynamiclib \
+    -Wl,-undefined,error \
+    -Wl,-install_name,@rpath/libWIOSWineServerCore.dylib \
+    $SERVER_OBJECTS \
+    "$OBJECT_ROOT/WIOSWineServerCoreAdapter.o" \
+    -o "$WINE_SERVER_CORE_DYLIB"
 
 "$CLANGXX" -arch arm64 -isysroot "$SDK_PATH" -miphoneos-version-min="$WIOS_MIN_IOS" \
     "$OBJECT_ROOT/main.o" \
@@ -98,14 +135,23 @@ mkdir -p "$BUILD_ROOT/logs"
     echo "WINE_RUNTIME_LAYOUT=BEGIN"
     find "$RUNTIME_ROOT" -type f | LC_ALL=C sort | sed "s#^$RUNTIME_ROOT/##"
     echo "WINE_RUNTIME_LAYOUT=END"
+    file "$RUNTIME_ROOT/libWIOSWineServerCore.dylib"
+    xcrun vtool -show-build "$RUNTIME_ROOT/libWIOSWineServerCore.dylib" || true
+    xcrun nm -gU "$RUNTIME_ROOT/libWIOSWineServerCore.dylib" \
+        | grep ' _wios_wine_server_core_' || true
     file "$RUNTIME_ROOT/dlls/ntdll/ntdll.so"
     file "$RUNTIME_ROOT/hello/hello.exe"
     echo "HOST_SERVER_MODEL=IN_PROCESS"
+    echo "WINE_SERVER_CORE=BUNDLED_REAL_OBJECTS"
+    echo "WINE_SERVER_CORE_HANDLER_EXECUTION=NOT_ATTEMPTED"
     echo "WINE_PROTOCOL_HEADER=$WINE_SOURCE/include/wine/server_protocol.h"
     echo "WINE_PROTOCOL_BRIDGE=COMPILED"
     echo "BUNDLED_WINESERVER=NO"
     echo "BUNDLED_WINE_LOADER=NO"
 } > "$LAYOUT_LOG"
+
+codesign --force --sign - --timestamp=none \
+    "$RUNTIME_ROOT/libWIOSWineServerCore.dylib"
 
 codesign --force --sign - --timestamp=none \
     "$RUNTIME_ROOT/dlls/ntdll/ntdll.so"
@@ -117,5 +163,6 @@ codesign --verify --deep --strict "$APP_ROOT"
 
 echo "Built $APP_ROOT"
 echo "Host server model: in-process"
+echo "Real Wine server core: bundled for device-load gate"
 echo "Wine server protocol bridge: compiled"
 echo "Runtime layout log: $LAYOUT_LOG"

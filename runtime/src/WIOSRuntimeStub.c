@@ -3,13 +3,20 @@
 
 #include <dlfcn.h>
 #include <errno.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <string.h>
 #include <sys/stat.h>
 
+#include "wine/server_protocol.h"
+
 static void *ntdll_handle;
 static void *wine_main_entry;
+static void *wine_server_core_handle;
 static char error_buffer[1024];
+
+typedef uint32_t (*wios_core_u32_fn)(void);
+typedef int (*wios_core_bool_fn)(void);
 
 static void set_error(const char *text)
 {
@@ -34,6 +41,7 @@ static int verify_runtime_layout(const wios_runtime_config *config,
                                  const char *runtime_root)
 {
     static const char *required[] = {
+        "libWIOSWineServerCore.dylib",
         "dlls/ntdll/ntdll.so",
         "dlls/ntdll/aarch64-windows/ntdll.dll",
         "dlls/kernelbase/aarch64-windows/kernelbase.dll",
@@ -77,6 +85,107 @@ static int verify_runtime_layout(const wios_runtime_config *config,
     return 0;
 }
 
+static int probe_real_wine_server_core(const wios_runtime_config *config,
+                                       const char *runtime_root)
+{
+    char core_path[4096];
+    const char *dl_error;
+    wios_core_u32_fn protocol_version;
+    wios_core_u32_fn abi_version;
+    wios_core_bool_fn has_close_handle;
+    uint32_t protocol;
+    uint32_t abi;
+
+    if (!make_path(core_path, sizeof(core_path),
+                   runtime_root, "libWIOSWineServerCore.dylib"))
+    {
+        set_error("Wine server core path is too long");
+        return -1;
+    }
+
+    runtime_log(config, "WINE_SERVER_CORE_BUNDLE_PATH=READY");
+
+    dlerror();
+    wine_server_core_handle = dlopen(core_path, RTLD_NOW | RTLD_LOCAL);
+    if (!wine_server_core_handle)
+    {
+        dl_error = dlerror();
+        set_error(dl_error ? dl_error : "Wine server core dlopen failed");
+        runtime_log(config, "WINE_SERVER_CORE_DLOPEN=FAIL");
+        return -2;
+    }
+
+    runtime_log(config, "WINE_SERVER_CORE_DLOPEN=PASS");
+
+    dlerror();
+    protocol_version = (wios_core_u32_fn)dlsym(
+        wine_server_core_handle, "wios_wine_server_core_protocol_version");
+    abi_version = (wios_core_u32_fn)dlsym(
+        wine_server_core_handle, "wios_wine_server_core_abi_version");
+    has_close_handle = (wios_core_bool_fn)dlsym(
+        wine_server_core_handle, "wios_wine_server_core_has_close_handle");
+
+    if (!protocol_version || !abi_version || !has_close_handle)
+    {
+        dl_error = dlerror();
+        set_error(dl_error ? dl_error : "Wine server core API symbol missing");
+        runtime_log(config, "WINE_SERVER_CORE_API=FAIL");
+        return -3;
+    }
+
+    runtime_log(config, "WINE_SERVER_CORE_API=PASS");
+
+    abi = abi_version();
+    if (abi != 1u)
+    {
+        snprintf(error_buffer, sizeof(error_buffer),
+                 "Wine server core ABI mismatch: got %u expected 1",
+                 (unsigned int)abi);
+        runtime_log(config, "WINE_SERVER_CORE_ABI=FAIL");
+        return -4;
+    }
+    runtime_log(config, "WINE_SERVER_CORE_ABI=PASS");
+
+    protocol = protocol_version();
+    if (protocol != (uint32_t)SERVER_PROTOCOL_VERSION)
+    {
+        snprintf(error_buffer, sizeof(error_buffer),
+                 "Wine server protocol mismatch: got %u expected %u",
+                 (unsigned int)protocol,
+                 (unsigned int)SERVER_PROTOCOL_VERSION);
+        runtime_log(config, "WINE_SERVER_CORE_PROTOCOL=FAIL");
+        return -5;
+    }
+
+    {
+        char line[128];
+        snprintf(line, sizeof(line),
+                 "WINE_SERVER_CORE_PROTOCOL_VERSION=%u",
+                 (unsigned int)protocol);
+        runtime_log(config, line);
+    }
+    runtime_log(config, "WINE_SERVER_CORE_PROTOCOL=PASS");
+
+    if (!has_close_handle())
+    {
+        set_error("Wine req_close_handle is not linked into server core");
+        runtime_log(config, "WINE_SERVER_CORE_HANDLER_LINK=FAIL");
+        return -6;
+    }
+
+    runtime_log(config, "WINE_SERVER_CORE_HANDLER_LINK=PASS");
+
+    /*
+     * This gate intentionally stops before executing req_close_handle.
+     * The real handler requires Wine's current thread/process/handle state.
+     * Device-loading the complete core and resolving the real handler is the
+     * safe prerequisite for attaching that state in the next phase.
+     */
+    runtime_log(config, "WINE_SERVER_CORE_HANDLER_EXECUTION=NOT_ATTEMPTED");
+    runtime_log(config, "WINE_SERVER_CORE_DEVICE_LOAD=PASS");
+    return 0;
+}
+
 static int runtime_initialize(const wios_runtime_config *config)
 {
     char runtime_root[4096];
@@ -98,7 +207,7 @@ static int runtime_initialize(const wios_runtime_config *config)
         return -2;
     }
 
-    if (ntdll_handle && wine_main_entry)
+    if (ntdll_handle && wine_main_entry && wine_server_core_handle)
     {
         runtime_log(config, "RUNTIME_ALREADY_INITIALIZED");
         return 0;
@@ -153,12 +262,15 @@ static int runtime_initialize(const wios_runtime_config *config)
     runtime_log(config, "WINE_MAIN_SYMBOL=PASS");
     runtime_log(config, "WINE_RUNTIME_BUNDLE_PROBE=PASS");
 
+    if (probe_real_wine_server_core(config, runtime_root) != 0)
+        return -8;
+
     if (wios_inproc_server_start(config->log_callback, config->log_context) != 0)
     {
         server_error = wios_inproc_server_last_error();
         set_error(server_error && server_error[0] ? server_error :
                   "in-process server start failed");
-        return -8;
+        return -9;
     }
 
     if (wios_inproc_server_ping() != 0)
@@ -167,7 +279,7 @@ static int runtime_initialize(const wios_runtime_config *config)
         set_error(server_error && server_error[0] ? server_error :
                   "in-process server roundtrip failed");
         wios_inproc_server_stop();
-        return -9;
+        return -10;
     }
 
     runtime_log(config, "INPROC_SERVER_TRANSPORT=PASS");
@@ -178,7 +290,7 @@ static int runtime_initialize(const wios_runtime_config *config)
         set_error(server_error && server_error[0] ? server_error :
                   "Wine server protocol bridge probe failed");
         wios_inproc_server_stop();
-        return -10;
+        return -11;
     }
 
     runtime_log(config, "HOST_RUNTIME_ARCHITECTURE=IN_PROCESS");
@@ -199,6 +311,12 @@ static int runtime_run_arm64_pe(const char *path_utf8,
 static void runtime_shutdown(void)
 {
     wios_inproc_server_stop();
+
+    if (wine_server_core_handle)
+    {
+        dlclose(wine_server_core_handle);
+        wine_server_core_handle = NULL;
+    }
 
     wine_main_entry = NULL;
     if (ntdll_handle)
