@@ -50,7 +50,7 @@ mkdir -p "$RUNTIME_ROOT/dlls/kernel32/aarch64-windows"
 mkdir -p "$RUNTIME_ROOT/hello"
 
 COMMON_FLAGS="-arch arm64 -isysroot $SDK_PATH -miphoneos-version-min=$WIOS_MIN_IOS -fobjc-arc -fmodules -Os"
-WINE_NATIVE_FLAGS="-I$WINE_SOURCE/include -fms-extensions"
+WINE_NATIVE_FLAGS="-D__WINESRC__ -I$WINE_SOURCE/include -fms-extensions"
 
 "$CLANG" $COMMON_FLAGS -I"$SOURCE_ROOT" -I"$PROJECT_ROOT/runtime/include" \
     -c "$SOURCE_ROOT/main.m" -o "$OBJECT_ROOT/main.o"
