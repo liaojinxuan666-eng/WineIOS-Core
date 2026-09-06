@@ -1,0 +1,20 @@
+diff --git a/dlls/ntdll/unix/loader.c b/dlls/ntdll/unix/loader.c
+index ad5ffc4..055eb5d 100644
+--- a/dlls/ntdll/unix/loader.c
++++ b/dlls/ntdll/unix/loader.c
+@@ -2322,8 +2322,15 @@ DECLSPEC_EXPORT void __wine_main( int argc, char *argv[] )
+ #endif
+ 
+ 
++#if defined(WINE_IOS)
++#if defined(__APPLE__) && defined(__MACH__)
++    /* iOS host owns the process main thread and its UIKit run loop. */
++    if (wios_main_probe_stop_stage == 4) return;
++#endif
++#else
+ #ifdef __APPLE__
+     apple_main_thread();
++#endif
+ #endif
+     start_main_thread();
+ }

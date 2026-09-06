@@ -2,3 +2,4 @@
 0002-ntdll-add-inprocess-server-call-bridge.patch
 0003-ntdll-add-main-init-probe.patch
 0004-ntdll-advance-environment-probe.patch
+0005-ntdll-add-ios-main-thread-boundary-probe.patch

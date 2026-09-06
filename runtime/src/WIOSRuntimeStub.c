@@ -15,6 +15,7 @@
 #define WIOS_MAIN_PROBE_STAGE_PATHS 1u
 #define WIOS_MAIN_PROBE_STAGE_VIRTUAL_INIT 2u
 #define WIOS_MAIN_PROBE_STAGE_ENVIRONMENT 3u
+#define WIOS_MAIN_PROBE_STAGE_IOS_THREAD_BOUNDARY 4u
 
 static void *ntdll_handle;
 static void *wine_main_entry;
@@ -397,7 +398,7 @@ static int probe_wine_main_entry(const wios_runtime_config *config)
     runtime_log(config, "WINE_ENV_PROBE_STATE_SYMBOL=PASS");
 
     wine_main = (wios_wine_main_fn)wine_main_entry;
-    ntdll_set_main_probe_stage(WIOS_MAIN_PROBE_STAGE_ENVIRONMENT);
+    ntdll_set_main_probe_stage(WIOS_MAIN_PROBE_STAGE_IOS_THREAD_BOUNDARY);
     runtime_log(config, "WINE_MAIN_CALL=BEGIN");
     wine_main(2, argv);
     ntdll_set_main_probe_stage(0);
@@ -422,7 +423,9 @@ static int probe_wine_main_entry(const wios_runtime_config *config)
 
     runtime_log(config, "WINE_ENV_CASE_TABLE=PASS");
     runtime_log(config, "WINE_ENV_INIT=PASS");
-    runtime_log(config, "WINE_MAIN_STOP_AFTER=ENVIRONMENT");
+    runtime_log(config, "WINE_IOS_MAIN_THREAD_BOUNDARY=PASS");
+    runtime_log(config, "WINE_APPLE_MAIN_THREAD=SKIPPED_IOS_HOST");
+    runtime_log(config, "WINE_MAIN_STOP_AFTER=IOS_THREAD_BOUNDARY");
     runtime_log(config, "WINE_MAIN_THREAD_INIT=NOT_RUN");
     runtime_log(config, "WINE_PREFIX_INIT=NOT_RUN");
     runtime_log(config, "WINDOWS_LOADER_INIT=NOT_RUN");

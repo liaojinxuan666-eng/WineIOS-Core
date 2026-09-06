@@ -37,6 +37,9 @@ real __wine_main entry                PASS
 Wine init_paths                       PASS
 Wine virtual_init                     PASS
 Wine init_unix_codepage              PASS
+Wine init_locale                       PASS
+Wine environment case table            PASS
+Wine init_environment                  PASS
 ```
 
 最近一次真机验证已经形成两条已确认链路。
@@ -80,18 +83,24 @@ virtual_init()
    ↓
 init_unix_codepage()
    ↓
+init_locale()
+   ↓
+NLS case table
+   ↓
+init_environment() complete
+   ↓
 probe stop
 ```
 
-当前探针已经验证 `virtual_init()` 与 `init_unix_codepage()` 完整返回。环境初始化仍按子阶段推进，尚未把整个 `init_environment()` 标记为 PASS。
+当前真机探针已经验证 `init_environment()` 完整返回，包括 `init_unix_codepage()`、`init_locale()` 与 NLS case table 初始化。
 
 ## 尚未完成
 
 当前 **不声称**已经可以运行 Windows 应用。
 
 ```text
-init_environment                    IN PROGRESS (device probe)
-Apple main-thread transition        NOT RUN
+init_environment                    PASS
+Apple main-thread transition        IN PROGRESS (iOS host boundary)
 start_main_thread                   NOT RUN
 server_init_process                 NOT RUN
 full Wine initialization            NOT RUN
@@ -125,6 +134,7 @@ WineIOS-Core/
 │   ├── 0002-...             ntdll in-process server-call bridge
 │   ├── 0003-...             Wine main initialization probe
 │   ├── 0004-...             environment 子阶段探针
+│   ├── 0005-...             iOS main-thread boundary 探针
 │   └── series               补丁应用顺序
 ├── runtime/
 │   ├── include/             Host ↔ runtime C ABI
@@ -157,7 +167,7 @@ CI 成功只证明构建链成立。真正的运行状态必须以 iPhone 真机
 
 ## 下一道门
 
-下一阶段只推进 `init_environment()` 内部的 `init_locale()`，仍然不进入 NLS case-table 初始化，也不启动 `hello.exe`。
+下一阶段只验证 iOS 宿主的主线程边界：iOS 构建不进入 Wine 的 macOS `apple_main_thread()`/Core Foundation 停驻路径，并在 `start_main_thread()` 之前主动停止。仍然不启动 `hello.exe`。
 
 目标探针：
 
@@ -166,16 +176,19 @@ WINE_MAIN_ENTER=PASS
 WINE_MAIN_PATH_INIT=PASS
 WINE_VIRTUAL_INIT=PASS
 WINE_ENV_CODEPAGE=PASS
-WINE_ENV_LOCALE=PASS / device crash before return
-WINE_ENV_CASE_TABLE=NOT_RUN
-WINE_ENV_INIT=PARTIAL
+WINE_ENV_LOCALE=PASS
+WINE_ENV_CASE_TABLE=PASS
+WINE_ENV_INIT=PASS
+WINE_IOS_MAIN_THREAD_BOUNDARY=PASS
+WINE_APPLE_MAIN_THREAD=SKIPPED_IOS_HOST
+WINE_MAIN_STOP_AFTER=IOS_THREAD_BOUNDARY
 WINE_MAIN_THREAD_INIT=NOT_RUN
 WINDOWS_ARM64_HELLO=NOT_RUN
 ```
 
 如果失败，必须把失败点定位到具体初始化阶段，而不是一次加入大量补丁。
 
-只有 `init_unix_codepage()`、`init_locale()` 和 NLS case-table 初始化逐段通过后，才把 `init_environment()` 标记为 PASS，再继续后续主线程初始化。
+`init_environment()` 已经完成真机验证。只有 iOS 主线程边界稳定后，才进入 `start_main_thread()` 的下一层探针。
 
 ## 开发原则
 
