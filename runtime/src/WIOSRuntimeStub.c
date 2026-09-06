@@ -13,6 +13,7 @@
 
 #define WIOS_STATUS_INVALID_HANDLE 0xC0000008u
 #define WIOS_MAIN_PROBE_STAGE_PATHS 1u
+#define WIOS_MAIN_PROBE_STAGE_VIRTUAL_INIT 2u
 
 static void *ntdll_handle;
 static void *wine_main_entry;
@@ -349,15 +350,32 @@ static int probe_wine_main_entry(const wios_runtime_config *config)
     }
     runtime_log(config, "WINE_SERVER_ACTIVE=PASS");
 
+    /*
+     * Wine normally evaluates its command line immediately after init_paths().
+     * This probe is not launching a PE yet, so explicitly suppress that re-exec
+     * path and advance only through virtual_init().
+     */
+    if (setenv("WINELOADERNOEXEC", "1", 1) != 0)
+    {
+        snprintf(error_buffer, sizeof(error_buffer),
+                 "failed to set WINELOADERNOEXEC (errno=%d: %s)",
+                 errno, strerror(errno));
+        runtime_log(config, "WINE_MAIN_NOEXEC_ENV=FAIL");
+        return -5;
+    }
+    runtime_log(config, "WINE_MAIN_NOEXEC_ENV=PASS");
+
     wine_main = (wios_wine_main_fn)wine_main_entry;
-    ntdll_set_main_probe_stage(WIOS_MAIN_PROBE_STAGE_PATHS);
+    ntdll_set_main_probe_stage(WIOS_MAIN_PROBE_STAGE_VIRTUAL_INIT);
     runtime_log(config, "WINE_MAIN_CALL=BEGIN");
     wine_main(2, argv);
     ntdll_set_main_probe_stage(0);
 
     runtime_log(config, "WINE_MAIN_ENTER=PASS");
     runtime_log(config, "WINE_MAIN_PATH_INIT=PASS");
-    runtime_log(config, "WINE_MAIN_STOP_AFTER=PATHS");
+    runtime_log(config, "WINE_VIRTUAL_INIT=PASS");
+    runtime_log(config, "WINE_MAIN_STOP_AFTER=VIRTUAL_INIT");
+    runtime_log(config, "WINE_ENV_INIT=NOT_RUN");
     runtime_log(config, "WINE_PREFIX_INIT=NOT_RUN");
     runtime_log(config, "WINDOWS_LOADER_INIT=NOT_RUN");
     runtime_log(config, "WINDOWS_ARM64_HELLO=NOT_RUN");
