@@ -2,13 +2,13 @@
 
 `WineIOS-Core` 是一个面向 iOS ARM64 的 Wine 核心 bring-up 与验证仓库。
 
-当前阶段的目标不是做完整启动器或产品 UI，而是先把 **Wine 11.0 → iOS ARM64 → Windows ARM64 PE** 的最小运行链路做成可重复、可验证的基础。
+当前目标是把 **Wine 11.0 → iOS ARM64 → Windows ARM64 PE** 的最小运行链路做成可重复、可验证的基础，并逐步推进真实 Wine 初始化。
 
 当前版本仍为 `0.0.1`。只有跨过明确的核心里程碑后才会升级版本号。
 
 ## 当前状态
 
-截至目前，CI 构建和真机探针已经验证：
+截至目前，CI 构建与 iPhone 真机探针已经验证：
 
 ```text
 Wine 11.0 frozen baseline             PASS
@@ -33,9 +33,13 @@ Wine server handler dispatch          PASS
 ntdll -> __wine_server_call path      PASS
 server reply -> ntdll path            PASS
 host runtime initialize               PASS
+real __wine_main entry                PASS
+Wine init_paths                       PASS
 ```
 
-最近一次真机验证已经形成以下闭环：
+最近一次真机验证已经形成两条已确认链路。
+
+第一条是 server protocol 闭环：
 
 ```text
 iOS Host
@@ -55,23 +59,43 @@ protocol reply
 ntdll
 ```
 
-测试请求得到 `STATUS_INVALID_HANDLE (0xC0000008)` 是预期的协议级返回值，用来证明真实 handler 已被调用并且 reply 能返回 ntdll；它不是运行失败。
+测试请求得到 `STATUS_INVALID_HANDLE (0xC0000008)` 是预期的协议级返回值，用于证明真实 Wine server handler 已被调用并且 reply 能返回 ntdll；它不是运行失败。
 
-## 还没有完成的部分
-
-当前 **不声称**已经可以运行 Windows 应用。以下阶段仍未通过：
+第二条是 Wine 主初始化入口：
 
 ```text
-real __wine_main entry                NOT RUN
-full Wine initialization              NOT RUN
-Wine prefix initialization            NOT RUN
-Windows PE loader startup             NOT RUN
-Windows ARM64 hello.exe execution     NOT RUN
-graphics backend                      NOT IMPLEMENTED
-JIT / x64 execution                   NOT CURRENT PRIORITY
+iOS Host
+   ↓
+Wine Runtime ABI
+   ↓
+ntdll.so
+   ↓
+__wine_main()
+   ↓
+init_paths()
+   ↓
+probe stop
 ```
 
-目前的重点仍然是 ARM64 Wine 核心本身，不把图形、启动器等内容提前混进运行时 bring-up。
+当前探针会在 `init_paths()` 完成后主动返回，因此不会误把尚未执行的后续阶段标记为完成。
+
+## 尚未完成
+
+当前 **不声称**已经可以运行 Windows 应用。
+
+```text
+virtual_init                        NOT RUN
+init_environment                    NOT RUN
+Apple main-thread transition        NOT RUN
+start_main_thread                   NOT RUN
+server_init_process                 NOT RUN
+full Wine initialization            NOT RUN
+Wine prefix initialization          NOT RUN
+Windows PE loader startup           NOT RUN
+Windows ARM64 hello.exe execution   NOT RUN
+```
+
+当前重点是继续推进 ARM64 Wine 核心初始化，不提前混入无关功能。
 
 ## 已冻结的 Wine 基线
 
@@ -94,6 +118,7 @@ WineIOS-Core/
 ├── patches/wine/            顺序化 Wine iOS 补丁
 │   ├── 0001-...             iOS platform/configure bring-up
 │   ├── 0002-...             ntdll in-process server-call bridge
+│   ├── 0003-...             Wine main initialization probe
 │   └── series               补丁应用顺序
 ├── runtime/
 │   ├── include/             Host ↔ runtime C ABI
@@ -120,32 +145,33 @@ CI 成功只证明构建链成立。真正的运行状态必须以 iPhone 真机
 
 ## 当前运行策略
 
-标准 Wine 使用独立 wineserver 进程及 Unix FD transport。当前 iOS bring-up 阶段正在验证 **同一宿主进程内的 Wine server 运行路径**，以适配 iOS 进程模型。
+标准 Wine 使用独立 wineserver 进程及 Unix FD transport。当前 iOS bring-up 使用同一宿主进程内的 Wine server 路径，以适配 iOS 进程模型。
 
-现阶段设备探针已经验证 server protocol、handler dispatch 和 ntdll server call 的闭环，但这仍然只是进入完整 Wine 初始化之前的基础设施。
+当前实现保留 Wine server protocol ABI 与真实 handler，仅替换不适合当前 iOS 宿主模型的进程/transport 边界。现有真机探针已经验证 handler dispatch 和 ntdll server call 往返闭环。
 
 ## 下一道门
 
-下一阶段只推进一件事：**进入真实 Wine 初始化，但暂时不启动 `hello.exe`。**
+下一阶段只推进一件事：**从已经通过的 `init_paths()` 继续进入 `virtual_init()`，仍然不启动 `hello.exe`。**
 
 目标探针：
 
 ```text
 WINE_MAIN_ENTER=PASS
-WINE_SERVER_ACTIVE=PASS
-WINE_PREFIX_INIT=PASS / FAIL_AT=<exact stage>
-WINDOWS_LOADER_INIT=PASS / FAIL_AT=<exact stage>
+WINE_MAIN_PATH_INIT=PASS
+WINE_VIRTUAL_INIT=PASS / FAIL_AT=<exact stage>
+WINE_ENV_INIT=NOT_RUN
 WINDOWS_ARM64_HELLO=NOT_RUN
 ```
 
 如果失败，必须把失败点定位到具体初始化阶段，而不是一次加入大量补丁。
 
-只有这一阶段稳定后，才进入 Windows ARM64 `hello.exe` 的真实执行。
+只有 `virtual_init()` 稳定后，才继续推进 `init_environment()` 与后续主线程初始化。
 
 ## 开发原则
 
 - 小步修改，每一步都必须有 PASS / FAIL 证据；
-- 先保证 Wine ARM64 核心，再进入图形与产品层；
+- 优先保证 Wine ARM64 核心初始化链；
 - 不以单个应用的特殊 hack 代替通用兼容实现；
+- 尽量保留 Wine 原始协议、状态机和 handler，只替换 iOS 平台确实不适用的边界；
 - CI 负责可重复构建，真机负责运行事实；
 - 不把“可以编译”描述成“已经可以运行 Windows 程序”。

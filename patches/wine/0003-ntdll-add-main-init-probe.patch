@@ -4,7 +4,7 @@ diff --git a/dlls/ntdll/unix/loader.c b/dlls/ntdll/unix/loader.c
 @@ -193,6 +193,16 @@ const char *user_name = NULL;
  const char *user_name = NULL;
  SECTION_IMAGE_INFORMATION main_image_info = { NULL };
- 
+
 +#if defined(__APPLE__) && defined(__MACH__)
 +static unsigned int wios_main_probe_stop_stage;
 +
@@ -20,13 +20,25 @@ diff --git a/dlls/ntdll/unix/loader.c b/dlls/ntdll/unix/loader.c
  {
 @@ -2281,6 +2291,11 @@ DECLSPEC_EXPORT void __wine_main( int argc, char *argv[] )
      main_argv = argv;
- 
+
      init_paths();
 +#if defined(__APPLE__) && defined(__MACH__)
-+    /* Stage 1 proves the real __wine_main entry and path setup without re-exec or full startup. */
++    /* Stage 1 proves the real __wine_main entry and path setup. */
 +    if (wios_main_probe_stop_stage == 1) return;
 +#endif
 +
      if (!getenv( "WINELOADERNOEXEC" ) || argc <= 1) check_command_line( argc, argv );
      unsetenv( "WINELOADERNOEXEC" );
- 
+
+@@ -2298,6 +2313,11 @@ DECLSPEC_EXPORT void __wine_main( int argc, char *argv[] )
+ #endif
+
+     virtual_init();
++#if defined(__APPLE__) && defined(__MACH__)
++    /* Stage 2 proves Wine virtual address-space initialization. */
++    if (wios_main_probe_stop_stage == 2) return;
++#endif
++
+     init_environment();
+
+ #ifdef __APPLE__
