@@ -2,10 +2,6 @@
 set -euo pipefail
 
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-
-# This file is currently kept at repository root because the existing
-# GitHub Actions workflow copies it to scripts/run-wine-ios-probe.sh
-# before execution. Make it safe in either location.
 if [[ -d "$SCRIPT_DIR/config" && -d "$SCRIPT_DIR/scripts" ]]; then
     PROJECT_ROOT="$SCRIPT_DIR"
 else
@@ -22,7 +18,6 @@ LLVM_MINGW_ARCHIVE="$PROJECT_ROOT/build/toolchains/$LLVM_MINGW_NAME.tar.xz"
 LLVM_MINGW_SHA256=48bedd161f14ae25a3646cb750b57ee3188e97e34bd3c52240c1810aa74d6a7f
 
 mkdir -p "$LOG_ROOT"
-
 DRIVER_LOG="$LOG_ROOT/probe-driver.log"
 printf '%s\n' "PROBE=START" > "$DRIVER_LOG"
 
@@ -75,8 +70,9 @@ aarch64-w64-mingw32-clang --version >> "$LOG_ROOT/llvm-mingw-version.log"
 probe_step configure-ios-arm64
 bash "$PROJECT_ROOT/scripts/configure-wine-ios.sh" "$WINE_SOURCE"
 
-probe_step compile-ntdll-unix
 JOBS=$(sysctl -n hw.logicalcpu)
+
+probe_step compile-ntdll-unix
 make -C "$IOS_BUILD" -j"$JOBS" dlls/ntdll/ntdll.so \
     2>&1 | tee "$LOG_ROOT/wine-ios-ntdll-build.log"
 
@@ -85,54 +81,6 @@ test -f "$NTDLL_UNIXLIB"
 file "$NTDLL_UNIXLIB" | tee "$LOG_ROOT/wine-ios-ntdll-inspect.log"
 xcrun lipo -info "$NTDLL_UNIXLIB" | tee -a "$LOG_ROOT/wine-ios-ntdll-inspect.log"
 xcrun vtool -show-build "$NTDLL_UNIXLIB" | tee -a "$LOG_ROOT/wine-ios-ntdll-inspect.log"
-
-probe_step inspect-server-sdk-capabilities
-. "$PROJECT_ROOT/config/version.env"
-SDK_PATH=$(xcrun --sdk iphoneos --show-sdk-path)
-SDK_CLANG=$(xcrun --sdk iphoneos --find clang)
-SDK_PROBE_DIR=$(mktemp -d "$IOS_BUILD/server-sdk-probe.XXXXXX")
-SDK_LOG="$LOG_ROOT/wine-ios-server-sdk.log"
-printf 'SDK=%s\nTARGET=arm64-apple-ios%s\nDEVICE_RUNTIME=NOT_RUN\n' \
-    "$SDK_PATH" "$WIOS_MIN_IOS" > "$SDK_LOG"
-
-for api in vm_map vm_deallocate vm_region_64 vm_read_overwrite vm_write \
-    vm_protect task_suspend task_resume task_for_pid mach_port_extract_right
-do
-    printf '#include <mach/mach.h>\n#include <mach/vm_map.h>\nint main(void) { __typeof__(&%s) volatile p = &%s; return p == 0; }\n' \
-        "$api" "$api" > "$SDK_PROBE_DIR/$api.c"
-    printf '\nAPI=%s\n' "$api" >> "$SDK_LOG"
-    if "$SDK_CLANG" -target "arm64-apple-ios$WIOS_MIN_IOS" \
-        -isysroot "$SDK_PATH" -Werror=implicit-function-declaration \
-        -Werror=unguarded-availability-new "$SDK_PROBE_DIR/$api.c" \
-        -o "$SDK_PROBE_DIR/$api" >> "$SDK_LOG" 2>&1
-    then
-        printf 'COMPILE_LINK=PASS\n' >> "$SDK_LOG"
-    else
-        printf 'COMPILE_LINK=FAIL\n' >> "$SDK_LOG"
-    fi
-done
-
-for header in mach/vm_map.h mach/vm_types.h mach/mach_vm.h servers/bootstrap.h
-do
-    printf '\nHEADER=%s\n' "$header" >> "$SDK_LOG"
-    if [ -f "$SDK_PATH/usr/include/$header" ]; then
-        cp "$SDK_PATH/usr/include/$header" \
-            "$LOG_ROOT/server-sdk-${header##*/}.txt"
-        printf 'PRESENT=YES\n' >> "$SDK_LOG"
-    else
-        printf 'PRESENT=NO\n' >> "$SDK_LOG"
-    fi
-done
-
-printf '\nBOOTSTRAP_EXPORT_EVIDENCE\n' >> "$SDK_LOG"
-if grep -R -n -E --include='*.tbd' \
-    'bootstrap_(look_up|register2|check_in)|__pthread_kill' \
-    "$SDK_PATH/usr/lib" >> "$SDK_LOG" 2>&1
-then
-    printf 'EXPORT_SCAN=MATCHES_FOUND\n' >> "$SDK_LOG"
-else
-    printf 'EXPORT_SCAN=NO_MATCH_OR_SCAN_ERROR\n' >> "$SDK_LOG"
-fi
 
 probe_step compile-wineserver
 make -C "$IOS_BUILD" -j"$JOBS" server/wineserver \
@@ -150,8 +98,7 @@ PE_MODULES=(
     dlls/kernelbase/aarch64-windows/kernelbase.dll
     dlls/kernel32/aarch64-windows/kernel32.dll
 )
-make -C "$IOS_BUILD" -j"$JOBS" \
-    "${PE_MODULES[@]}" \
+make -C "$IOS_BUILD" -j"$JOBS" "${PE_MODULES[@]}" \
     2>&1 | tee "$LOG_ROOT/wine-ios-arm64-pe-build.log"
 
 PE_INSPECT_LOG="$LOG_ROOT/wine-ios-arm64-pe-inspect.log"
@@ -208,11 +155,18 @@ aarch64-w64-mingw32-objdump -p "$HELLO_DIR/hello.exe" \
 HELLO_IMPORTS=$(sed -n 's/.*DLL Name: //p' "$LOG_ROOT/wine-ios-hello-inspect.log" \
     | tr '[:upper:]' '[:lower:]' | tr -d '\r')
 test "$HELLO_IMPORTS" = kernel32.dll
-cp "$HELLO_DIR/hello.c" "$LOG_ROOT/hello.c"
-cp "$HELLO_DIR/hello.exe" "$LOG_ROOT/hello.exe"
 
 probe_step package-ios-runtime
 bash "$PROJECT_ROOT/scripts/wine-ios-runtime-probe.sh"
+
+probe_step build-runtime-host
+bash "$PROJECT_ROOT/scripts/build-host.sh"
+
+probe_step package-runtime-host
+bash "$PROJECT_ROOT/scripts/package-ipa.sh"
+. "$PROJECT_ROOT/config/version.env"
+cp "$PROJECT_ROOT/build/WineIOSHost-$WIOS_VERSION.ipa" \
+   "$LOG_ROOT/WineIOSHost.ipa"
 
 trap - ERR
 echo "CONFIGURE=PASS" | tee "$LOG_ROOT/probe-summary.txt"
@@ -223,5 +177,6 @@ echo "WINDOWS_ARM64_CORE_PE=PASS" | tee -a "$LOG_ROOT/probe-summary.txt"
 echo "IOS_WINE_LOADER_BUILD=PASS" | tee -a "$LOG_ROOT/probe-summary.txt"
 echo "WINDOWS_ARM64_HELLO_BUILD=PASS" | tee -a "$LOG_ROOT/probe-summary.txt"
 echo "IOS_RUNTIME_PACKAGE=PASS" | tee -a "$LOG_ROOT/probe-summary.txt"
-echo "IOS_WINE_INITIALIZATION=NOT_RUN" | tee -a "$LOG_ROOT/probe-summary.txt"
+echo "IOS_RUNTIME_HOST_IPA=PASS" | tee -a "$LOG_ROOT/probe-summary.txt"
+echo "IOS_WINE_INITIALIZATION=HOST_DEVICE_TEST_REQUIRED" | tee -a "$LOG_ROOT/probe-summary.txt"
 echo "WINDOWS_ARM64_HELLO=NOT_RUN" | tee -a "$LOG_ROOT/probe-summary.txt"
