@@ -30,7 +30,7 @@ diff --git a/dlls/ntdll/unix/loader.c b/dlls/ntdll/unix/loader.c
      if (!getenv( "WINELOADERNOEXEC" ) || argc <= 1) check_command_line( argc, argv );
      unsetenv( "WINELOADERNOEXEC" );
 
-@@ -2298,6 +2313,11 @@ DECLSPEC_EXPORT void __wine_main( int argc, char *argv[] )
+@@ -2295,6 +2310,11 @@ DECLSPEC_EXPORT void __wine_main( int argc, char *argv[] )
  #endif
 
      virtual_init();
