@@ -17,6 +17,14 @@ int wios_inproc_server_start(wios_log_callback log_callback, void *log_context);
 int wios_inproc_server_ping(void);
 
 /*
+ * Wine-client bridge entry. The argument is Wine's __server_request_info.
+ * Current phase intentionally supports the no-variable-data close_handle
+ * request only; unsupported frames fail closed instead of falling back to
+ * Wine's Unix fd transport.
+ */
+uint32_t wios_inproc_server_call(void *req_ptr);
+
+/*
  * Sends one real Wine server-protocol frame through Arcadia's in-process
  * transport. If the Wine close_handle dispatcher is attached, the frame is
  * routed into Wine's real req_close_handle handler.

@@ -8,7 +8,7 @@
 #include <string.h>
 #include <sys/stat.h>
 
-#include "wine/server_protocol.h"
+#include "wine/server.h"
 
 #define WIOS_STATUS_INVALID_HANDLE 0xC0000008u
 
@@ -20,6 +20,10 @@ static char error_buffer[1024];
 typedef uint32_t (*wios_core_u32_fn)(void);
 typedef int (*wios_core_bool_fn)(void);
 typedef uint32_t (*wios_core_close_handle_fn)(uint32_t handle);
+typedef void (*wios_ntdll_set_bridge_fn)(uint32_t (*bridge)(void *));
+typedef uint32_t (*wios_ntdll_probe_call_fn)(void *);
+
+static wios_ntdll_set_bridge_fn ntdll_set_server_call_bridge;
 
 static void set_error(const char *text)
 {
@@ -224,6 +228,73 @@ static int probe_real_wine_server_core(const wios_runtime_config *config,
     return 0;
 }
 
+static int probe_ntdll_server_call_bridge(const wios_runtime_config *config)
+{
+    const char *dl_error;
+    wios_ntdll_probe_call_fn probe_call;
+    struct __server_request_info request_info;
+    struct close_handle_request *request;
+    uint32_t status;
+
+    dlerror();
+    ntdll_set_server_call_bridge = (wios_ntdll_set_bridge_fn)dlsym(
+        ntdll_handle, "wios_ntdll_set_server_call_bridge");
+    probe_call = (wios_ntdll_probe_call_fn)dlsym(
+        ntdll_handle, "wios_ntdll_probe_server_call");
+
+    if (!ntdll_set_server_call_bridge || !probe_call)
+    {
+        dl_error = dlerror();
+        set_error(dl_error ? dl_error : "NTDLL server bridge symbol missing");
+        runtime_log(config, "NTDLL_SERVER_BRIDGE_SYMBOLS=FAIL");
+        return -1;
+    }
+
+    runtime_log(config, "NTDLL_SERVER_BRIDGE_SYMBOLS=PASS");
+
+    ntdll_set_server_call_bridge(wios_inproc_server_call);
+    runtime_log(config, "NTDLL_SERVER_BRIDGE_ATTACH=PASS");
+
+    memset(&request_info, 0, sizeof(request_info));
+    request = &request_info.u.req.close_handle_request;
+    request->__header.req = REQ_close_handle;
+    request->__header.request_size = 0;
+    request->__header.reply_size = 0;
+    request->handle = 0;
+
+    /*
+     * This enters Wine's real ntdll wine_server_call() first.  The iOS bridge
+     * then replaces only the Unix fd transport, forwards the protocol frame to
+     * Arcadia's server thread, and returns the real req_close_handle result.
+     */
+    status = probe_call(&request_info);
+
+    {
+        char line[128];
+        snprintf(line, sizeof(line),
+                 "NTDLL_WINE_SERVER_CALL_STATUS=0x%08X",
+                 (unsigned int)status);
+        runtime_log(config, line);
+    }
+
+    if (status != WIOS_STATUS_INVALID_HANDLE ||
+        request_info.u.reply.reply_header.error != WIOS_STATUS_INVALID_HANDLE ||
+        request_info.u.reply.reply_header.reply_size != 0)
+    {
+        set_error("NTDLL wine_server_call bridge returned unexpected reply");
+        runtime_log(config, "NTDLL_WINE_SERVER_CALL=FAIL");
+        runtime_log(config, "NTDLL_INPROC_SERVER_PATH=FAIL");
+        ntdll_set_server_call_bridge(NULL);
+        ntdll_set_server_call_bridge = NULL;
+        return -2;
+    }
+
+    runtime_log(config, "NTDLL_WINE_SERVER_CALL=PASS");
+    runtime_log(config, "NTDLL_INPROC_SERVER_PATH=PASS");
+    runtime_log(config, "NTDLL_UNIX_FD_TRANSPORT=BYPASSED_FOR_PROBE");
+    return 0;
+}
+
 static int runtime_initialize(const wios_runtime_config *config)
 {
     char runtime_root[4096];
@@ -331,6 +402,12 @@ static int runtime_initialize(const wios_runtime_config *config)
         return -11;
     }
 
+    if (probe_ntdll_server_call_bridge(config) != 0)
+    {
+        wios_inproc_server_stop();
+        return -12;
+    }
+
     runtime_log(config, "HOST_RUNTIME_ARCHITECTURE=IN_PROCESS");
     return 0;
 }
@@ -348,6 +425,12 @@ static int runtime_run_arm64_pe(const char *path_utf8,
 
 static void runtime_shutdown(void)
 {
+    if (ntdll_set_server_call_bridge)
+    {
+        ntdll_set_server_call_bridge(NULL);
+        ntdll_set_server_call_bridge = NULL;
+    }
+
     wios_inproc_server_stop();
 
     if (wine_server_core_handle)

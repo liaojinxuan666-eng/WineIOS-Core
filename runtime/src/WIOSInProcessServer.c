@@ -8,10 +8,11 @@
 #include <string.h>
 #include <time.h>
 
-#include "wine/server_protocol.h"
+#include "wine/server.h"
 
-#define WIOS_STATUS_NOT_IMPLEMENTED 0xC0000002u
-#define WIOS_STATUS_INVALID_HANDLE  0xC0000008u
+#define WIOS_STATUS_NOT_IMPLEMENTED   0xC0000002u
+#define WIOS_STATUS_INVALID_HANDLE    0xC0000008u
+#define WIOS_STATUS_INVALID_PARAMETER 0xC000000Du
 
 enum
 {
@@ -303,7 +304,7 @@ int wios_inproc_server_start(wios_log_callback log_callback, void *log_context)
         pthread_cond_broadcast(&server.cond);
         pthread_mutex_unlock(&server.mutex);
         pthread_join(server.thread, NULL);
-        log_line("INPROC_SERVER_READY=FAIL");
+        log_line("INPROC_SERVER_THREAD=FAIL");
         return -3;
     }
     pthread_mutex_unlock(&server.mutex);
@@ -354,6 +355,59 @@ static int submit_request_and_wait(int kind, uint64_t *seq_out)
 
     if (seq_out) *seq_out = seq;
     return server.response_code;
+}
+
+uint32_t wios_inproc_server_call(void *req_ptr)
+{
+    struct __server_request_info *req = req_ptr;
+    uint32_t status;
+    int response;
+
+    if (!req)
+    {
+        set_error("null Wine server request");
+        return WIOS_STATUS_INVALID_PARAMETER;
+    }
+
+    pthread_mutex_lock(&server.mutex);
+
+    if (!server.running || !server.ready)
+    {
+        set_error("in-process server is not ready");
+        pthread_mutex_unlock(&server.mutex);
+        return WIOS_STATUS_NOT_IMPLEMENTED;
+    }
+
+    /*
+     * First NTDLL bridge gate is deliberately narrow. close_handle has no
+     * variable request/reply payload, so accepting anything else here could
+     * silently corrupt Wine's protocol state.
+     */
+    if (req->u.req.request_header.req != REQ_close_handle ||
+        req->u.req.request_header.request_size != 0 ||
+        req->u.req.request_header.reply_size != 0 ||
+        req->data_count != 0)
+    {
+        set_error("Wine NTDLL bridge frame is not supported by this phase");
+        pthread_mutex_unlock(&server.mutex);
+        return WIOS_STATUS_NOT_IMPLEMENTED;
+    }
+
+    server.wine_request = req->u.req;
+    memset(&server.wine_reply, 0, sizeof(server.wine_reply));
+
+    response = submit_request_and_wait(WIOS_REQUEST_WINE_PROTOCOL, NULL);
+    if (response != 0)
+    {
+        pthread_mutex_unlock(&server.mutex);
+        return WIOS_STATUS_NOT_IMPLEMENTED;
+    }
+
+    req->u.reply = server.wine_reply;
+    status = req->u.reply.reply_header.error;
+
+    pthread_mutex_unlock(&server.mutex);
+    return status;
 }
 
 int wios_inproc_server_ping(void)

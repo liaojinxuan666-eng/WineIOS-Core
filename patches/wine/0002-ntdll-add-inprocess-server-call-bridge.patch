@@ -1,0 +1,55 @@
+diff --git a/dlls/ntdll/unix/server.c b/dlls/ntdll/unix/server.c
+--- a/dlls/ntdll/unix/server.c
++++ b/dlls/ntdll/unix/server.c
+@@ -105,6 +105,20 @@ timeout_t server_start_time = 0;  /* time of server startup */
+ sigset_t server_block_set;  /* signals to block during server calls */
+ static int fd_socket = -1;  /* socket to exchange file descriptors with the server */
+ static int initial_cwd = -1;
+ static pid_t server_pid;
+ pthread_mutex_t fd_cache_mutex = PTHREAD_MUTEX_INITIALIZER;
+
++#if defined(__APPLE__) && defined(__MACH__)
++typedef unsigned int (*wios_server_call_bridge_fn)( void *req_ptr );
++
++static wios_server_call_bridge_fn wios_server_call_bridge;
++
++__attribute__((visibility("default")))
++void wios_ntdll_set_server_call_bridge( wios_server_call_bridge_fn bridge )
++{
++    wios_server_call_bridge = bridge;
++}
++#endif
++
+ /* atomically exchange a 64-bit value */
+ static inline LONG64 interlocked_xchg64( LONG64 *dest, LONG64 val )
+ {
+@@ -303,6 +317,10 @@ unsigned int CDECL wine_server_call( void *req_ptr )
+     sigset_t old_set;
+     unsigned int ret;
+
++#if defined(__APPLE__) && defined(__MACH__)
++    if (wios_server_call_bridge) return wios_server_call_bridge( req_ptr );
++#endif
++
+     pthread_sigmask( SIG_BLOCK, &server_block_set, &old_set );
+     ret = server_call_unlocked( req_ptr );
+     pthread_sigmask( SIG_SETMASK, &old_set, NULL );
+@@ -310,6 +328,17 @@ unsigned int CDECL wine_server_call( void *req_ptr )
+ }
+
+
++#if defined(__APPLE__) && defined(__MACH__)
++__attribute__((visibility("default")))
++unsigned int wios_ntdll_probe_server_call( void *req_ptr )
++{
++    /*
++     * Keep the probe on Wine's real client entry point.  The registered
++     * Arcadia callback only replaces the Unix fd transport on iOS.
++     */
++    return wine_server_call( req_ptr );
++}
++#endif
++
+ /***********************************************************************
+  *           unixcall_wine_server_call
+  *
