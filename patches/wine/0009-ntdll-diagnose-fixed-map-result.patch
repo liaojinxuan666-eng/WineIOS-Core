@@ -1,0 +1,133 @@
+diff --git a/dlls/ntdll/unix/virtual.c b/dlls/ntdll/unix/virtual.c
+--- a/dlls/ntdll/unix/virtual.c
++++ b/dlls/ntdll/unix/virtual.c
+@@ -590,6 +590,91 @@
++#if defined(__APPLE__) && defined(__MACH__) && defined(WINE_IOS)
++static unsigned int wios_first_teb_fixed_map_captured;
++static unsigned int wios_first_teb_fixed_map_primitive;
++static UINT_PTR wios_first_teb_fixed_map_requested;
++static SIZE_T wios_first_teb_fixed_map_size;
++static int wios_first_teb_fixed_map_prot;
++static int wios_first_teb_fixed_map_flags;
++static UINT_PTR wios_first_teb_fixed_map_raw_result;
++static int wios_first_teb_fixed_map_mach_ret;
++static int wios_first_teb_fixed_map_raw_errno;
++static UINT_PTR wios_first_teb_fixed_map_final_result;
++static int wios_first_teb_fixed_map_final_errno;
++
++static int wios_capture_first_teb_fixed_map( void *start )
++{
++    const char *probe = getenv( "WIOS_FIRST_TEB_PROBE" );
++
++    return start == user_shared_data && probe && !strcmp( probe, "shared_user_data" );
++}
++
++__attribute__((visibility("default")))
++const char *wios_ntdll_get_first_teb_fixed_map_probe(void)
++{
++    static char buffer[512];
++    const char *primitive = "UNKNOWN";
++
++    if (!wios_first_teb_fixed_map_captured)
++        return "WINE_FIRST_TEB_FIXED_MAP=NOT_CAPTURED";
++
++    switch (wios_first_teb_fixed_map_primitive)
++    {
++    case 1: primitive = "MAP_FIXED_NOREPLACE"; break;
++    case 2: primitive = "MAP_TRYFIXED"; break;
++    case 3: primitive = "MAP_FIXED_EXCL"; break;
++    case 4: primitive = "MACH_VM_MAP"; break;
++    case 5: primitive = "MMAP_HINT"; break;
++    }
++
++    snprintf( buffer, sizeof(buffer),
++              "WINE_FIRST_TEB_FIXED_MAP=primitive=%s requested=0x%016llX size=0x%llX "
++              "prot=0x%X flags=0x%X raw=0x%016llX mach_ret=%d raw_errno=%d "
++              "final=0x%016llX final_errno=%d",
++              primitive,
++              (unsigned long long)wios_first_teb_fixed_map_requested,
++              (unsigned long long)wios_first_teb_fixed_map_size,
++              wios_first_teb_fixed_map_prot,
++              wios_first_teb_fixed_map_flags,
++              (unsigned long long)wios_first_teb_fixed_map_raw_result,
++              wios_first_teb_fixed_map_mach_ret,
++              wios_first_teb_fixed_map_raw_errno,
++              (unsigned long long)wios_first_teb_fixed_map_final_result,
++              wios_first_teb_fixed_map_final_errno );
++    return buffer;
++}
++#endif
++
++
+ static void *anon_mmap_tryfixed( void *start, size_t size, int prot, int flags )
+ {
+     void *ptr;
++#if defined(__APPLE__) && defined(__MACH__) && defined(WINE_IOS)
++    int wios_capture = wios_capture_first_teb_fixed_map( start );
++
++    if (wios_capture)
++    {
++        wios_first_teb_fixed_map_captured = 0;
++        wios_first_teb_fixed_map_requested = (UINT_PTR)start;
++        wios_first_teb_fixed_map_size = size;
++        wios_first_teb_fixed_map_prot = prot;
++        wios_first_teb_fixed_map_flags = flags;
++        wios_first_teb_fixed_map_raw_result = (UINT_PTR)MAP_FAILED;
++        wios_first_teb_fixed_map_mach_ret = -1;
++        wios_first_teb_fixed_map_raw_errno = 0;
++        wios_first_teb_fixed_map_final_result = (UINT_PTR)MAP_FAILED;
++        wios_first_teb_fixed_map_final_errno = 0;
++#ifdef MAP_FIXED_NOREPLACE
++        wios_first_teb_fixed_map_primitive = 1;
++#elif defined(MAP_TRYFIXED)
++        wios_first_teb_fixed_map_primitive = 2;
++#elif defined(__FreeBSD__) || defined(__FreeBSD_kernel__)
++        wios_first_teb_fixed_map_primitive = 3;
++#elif defined(__APPLE__)
++        wios_first_teb_fixed_map_primitive = 4;
++#else
++        wios_first_teb_fixed_map_primitive = 5;
++#endif
++    }
++#endif
+ 
+ #ifdef MAP_FIXED_NOREPLACE
+     ptr = mmap( start, size, prot, MAP_FIXED_NOREPLACE | MAP_PRIVATE | MAP_ANON | flags, -1, 0 );
+@@ -603,6 +688,9 @@
+     kern_return_t ret = mach_vm_map( mach_task_self(), &result, size, 0, VM_FLAGS_FIXED,
+                                      MEMORY_OBJECT_NULL, 0, 0, prot, VM_PROT_ALL, VM_INHERIT_COPY );
+ 
++#if defined(__MACH__) && defined(WINE_IOS)
++    if (wios_capture) wios_first_teb_fixed_map_mach_ret = (int)ret;
++#endif
+     if (!ret)
+     {
+         if ((ptr = anon_mmap_fixed( start, size, prot, flags )) == MAP_FAILED)
+@@ -616,6 +704,13 @@
+ #else
+     ptr = mmap( start, size, prot, MAP_PRIVATE | MAP_ANON | flags, -1, 0 );
+ #endif
++#if defined(__APPLE__) && defined(__MACH__) && defined(WINE_IOS)
++    if (wios_capture)
++    {
++        wios_first_teb_fixed_map_raw_result = (UINT_PTR)ptr;
++        wios_first_teb_fixed_map_raw_errno = ptr == MAP_FAILED ? errno : 0;
++    }
++#endif
+     if (ptr != MAP_FAILED && ptr != start)
+     {
+         size = unmap_area_above_user_limit( ptr, size );
+@@ -623,5 +718,13 @@
+         ptr = MAP_FAILED;
+         errno = EEXIST;
+     }
++#if defined(__APPLE__) && defined(__MACH__) && defined(WINE_IOS)
++    if (wios_capture)
++    {
++        wios_first_teb_fixed_map_final_result = (UINT_PTR)ptr;
++        wios_first_teb_fixed_map_final_errno = ptr == MAP_FAILED ? errno : 0;
++        wios_first_teb_fixed_map_captured = 1;
++    }
++#endif
+     return ptr;
+ }

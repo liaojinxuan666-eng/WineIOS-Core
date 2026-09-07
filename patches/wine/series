@@ -6,3 +6,4 @@
 0006-ntdll-probe-first-teb.patch
 0007-ntdll-probe-shared-user-data.patch
 0008-ntdll-diagnose-shared-user-data-conflict.patch
+0009-ntdll-diagnose-fixed-map-result.patch
