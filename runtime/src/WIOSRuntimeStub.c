@@ -22,6 +22,8 @@ static void *ntdll_handle;
 static void *wine_main_entry;
 static void *wine_server_core_handle;
 static char error_buffer[1024];
+static int runtime_probe_attempted;
+static int runtime_probe_succeeded;
 
 typedef uint32_t (*wios_core_u32_fn)(void);
 typedef int (*wios_core_bool_fn)(void);
@@ -565,8 +567,6 @@ static int runtime_initialize(const wios_runtime_config *config)
     const char *dl_error;
     const char *server_error;
 
-    error_buffer[0] = '\0';
-
     if (!config || config->struct_size < sizeof(*config))
     {
         set_error("invalid runtime config");
@@ -579,11 +579,21 @@ static int runtime_initialize(const wios_runtime_config *config)
         return -2;
     }
 
-    if (ntdll_handle && wine_main_entry && wine_server_core_handle)
+    /* Loaded libraries do not imply successful initialization. Wine's global
+     * VM/locale state cannot safely be re-entered after a partial probe. */
+    if (runtime_probe_attempted)
     {
-        runtime_log(config, "RUNTIME_ALREADY_INITIALIZED");
-        return 0;
+        if (runtime_probe_succeeded)
+        {
+            runtime_log(config, "RUNTIME_PROBE_ALREADY_COMPLETED");
+            return 0;
+        }
+        if (!error_buffer[0]) set_error("Restart the host before retrying the Wine probe");
+        runtime_log(config, "RUNTIME_RETRY=RESTART_HOST_REQUIRED");
+        return -14;
     }
+
+    error_buffer[0] = '\0';
 
     if (!make_path(runtime_root, sizeof(runtime_root),
                    config->container_root_utf8, "Frameworks/WineRuntime"))
@@ -593,6 +603,7 @@ static int runtime_initialize(const wios_runtime_config *config)
     }
 
     runtime_log(config, "RUNTIME_ABI=PASS");
+    runtime_log(config, "WINE_RUNTIME_REVISION=IOS_FIXED_MAP_1");
     runtime_log(config, "WINE_RUNTIME_ROOT=READY");
 
     if (verify_runtime_layout(config, runtime_root) != 0)
@@ -607,6 +618,7 @@ static int runtime_initialize(const wios_runtime_config *config)
 
     runtime_log(config, "NTDLL_BUNDLE_PATH=READY");
 
+    runtime_probe_attempted = 1;
     dlerror();
     ntdll_handle = dlopen(ntdll_path, RTLD_NOW | RTLD_LOCAL);
     if (!ntdll_handle)
@@ -678,6 +690,8 @@ static int runtime_initialize(const wios_runtime_config *config)
     }
 
     runtime_log(config, "HOST_RUNTIME_ARCHITECTURE=IN_PROCESS");
+    runtime_log(config, "WINE_EXECUTION_READY=NO_PROBE_ONLY");
+    runtime_probe_succeeded = 1;
     return 0;
 }
 
@@ -694,6 +708,7 @@ static int runtime_run_arm64_pe(const char *path_utf8,
 
 static void runtime_shutdown(void)
 {
+    runtime_probe_succeeded = 0;
     if (ntdll_set_main_probe_stage)
     {
         ntdll_set_main_probe_stage(0);

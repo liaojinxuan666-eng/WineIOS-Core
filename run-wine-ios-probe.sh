@@ -42,6 +42,9 @@ probe_failed()
 
 trap 'probe_failed "$?" "$LINENO" "$BASH_COMMAND"' ERR
 
+probe_step test-runtime-retry
+python3 "$PROJECT_ROOT/tests/test-runtime-retry.py"
+
 probe_step fetch-wine
 bash "$PROJECT_ROOT/scripts/fetch-wine.sh" "$WINE_SOURCE"
 
@@ -50,6 +53,9 @@ bash "$PROJECT_ROOT/scripts/build-wine-tools-macos.sh" "$WINE_SOURCE"
 
 probe_step apply-ios-patches
 bash "$PROJECT_ROOT/scripts/apply-wine-patches.sh" "$WINE_SOURCE"
+
+probe_step test-ios-fixed-map
+python3 "$PROJECT_ROOT/tests/test-ios-fixed-map.py" "$WINE_SOURCE"
 
 probe_step fetch-arm64-pe-toolchain
 mkdir -p "$PROJECT_ROOT/build/toolchains"

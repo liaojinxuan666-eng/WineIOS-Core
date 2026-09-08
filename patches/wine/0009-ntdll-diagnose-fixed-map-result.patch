@@ -1,7 +1,11 @@
 diff --git a/dlls/ntdll/unix/virtual.c b/dlls/ntdll/unix/virtual.c
+index 6e5b515..7e0b83f 100644
 --- a/dlls/ntdll/unix/virtual.c
 +++ b/dlls/ntdll/unix/virtual.c
-@@ -590,6 +590,91 @@
+@@ -589,9 +589,97 @@ static size_t unmap_area_above_user_limit( void *addr, size_t size )
+ }
+ 
+ 
 +#if defined(__APPLE__) && defined(__MACH__) && defined(WINE_IOS)
 +static unsigned int wios_first_teb_fixed_map_captured;
 +static unsigned int wios_first_teb_fixed_map_primitive;
@@ -38,6 +42,7 @@ diff --git a/dlls/ntdll/unix/virtual.c b/dlls/ntdll/unix/virtual.c
 +    case 3: primitive = "MAP_FIXED_EXCL"; break;
 +    case 4: primitive = "MACH_VM_MAP"; break;
 +    case 5: primitive = "MMAP_HINT"; break;
++    case 6: primitive = "VM_MAP_FIXED_IOS"; break;
 +    }
 +
 +    snprintf( buffer, sizeof(buffer),
@@ -83,6 +88,8 @@ diff --git a/dlls/ntdll/unix/virtual.c b/dlls/ntdll/unix/virtual.c
 +        wios_first_teb_fixed_map_primitive = 2;
 +#elif defined(__FreeBSD__) || defined(__FreeBSD_kernel__)
 +        wios_first_teb_fixed_map_primitive = 3;
++#elif defined(__APPLE__) && defined(WINE_IOS)
++        wios_first_teb_fixed_map_primitive = 6;
 +#elif defined(__APPLE__)
 +        wios_first_teb_fixed_map_primitive = 4;
 +#else
@@ -93,7 +100,38 @@ diff --git a/dlls/ntdll/unix/virtual.c b/dlls/ntdll/unix/virtual.c
  
  #ifdef MAP_FIXED_NOREPLACE
      ptr = mmap( start, size, prot, MAP_FIXED_NOREPLACE | MAP_PRIVATE | MAP_ANON | flags, -1, 0 );
-@@ -603,6 +688,9 @@
+@@ -600,11 +688,40 @@ static void *anon_mmap_tryfixed( void *start, size_t size, int prot, int flags )
+ #elif defined(__FreeBSD__) || defined(__FreeBSD_kernel__)
+     ptr = mmap( start, size, prot, MAP_FIXED | MAP_EXCL | MAP_PRIVATE | MAP_ANON | flags, -1, 0 );
+     if (ptr == MAP_FAILED && errno == EINVAL) errno = EEXIST;
++#elif defined(__APPLE__) && defined(WINE_IOS)
++    /* The iPhoneOS SDK exposes native-width vm_map, not mach_vm_map.
++     * VM_FLAGS_FIXED without OVERWRITE atomically refuses occupied ranges.
++     * Only replace a reservation owned by this call, as on macOS below. */
++    vm_address_t result = (vm_address_t)start;
++    kern_return_t ret;
++    C_ASSERT( sizeof(vm_address_t) == sizeof(void *) );
++    C_ASSERT( sizeof(vm_size_t) == sizeof(size_t) );
++    ret = vm_map( mach_task_self(), &result, size, 0, VM_FLAGS_FIXED,
++                  MEMORY_OBJECT_NULL, 0, 0, prot, VM_PROT_ALL, VM_INHERIT_COPY );
++    if (wios_capture) wios_first_teb_fixed_map_mach_ret = (int)ret;
++    if (ret == KERN_SUCCESS)
++    {
++        if ((ptr = anon_mmap_fixed( start, size, prot, flags )) == MAP_FAILED)
++        {
++            int saved_errno = errno;
++            vm_deallocate( mach_task_self(), result, size );
++            errno = saved_errno;
++        }
++    }
++    else
++    {
++        errno = ret == KERN_NO_SPACE ? EEXIST :
++                ret == KERN_PROTECTION_FAILURE ? EACCES : ENOMEM;
++        ptr = MAP_FAILED;
++    }
+ #elif defined(__APPLE__) && !defined(WINE_IOS)
+     mach_vm_address_t result = (mach_vm_address_t)start;
      kern_return_t ret = mach_vm_map( mach_task_self(), &result, size, 0, VM_FLAGS_FIXED,
                                       MEMORY_OBJECT_NULL, 0, 0, prot, VM_PROT_ALL, VM_INHERIT_COPY );
  
@@ -103,21 +141,21 @@ diff --git a/dlls/ntdll/unix/virtual.c b/dlls/ntdll/unix/virtual.c
      if (!ret)
      {
          if ((ptr = anon_mmap_fixed( start, size, prot, flags )) == MAP_FAILED)
-@@ -616,6 +704,13 @@
+@@ -617,6 +734,13 @@ static void *anon_mmap_tryfixed( void *start, size_t size, int prot, int flags )
+     }
  #else
      ptr = mmap( start, size, prot, MAP_PRIVATE | MAP_ANON | flags, -1, 0 );
- #endif
++#endif
 +#if defined(__APPLE__) && defined(__MACH__) && defined(WINE_IOS)
 +    if (wios_capture)
 +    {
 +        wios_first_teb_fixed_map_raw_result = (UINT_PTR)ptr;
 +        wios_first_teb_fixed_map_raw_errno = ptr == MAP_FAILED ? errno : 0;
 +    }
-+#endif
+ #endif
      if (ptr != MAP_FAILED && ptr != start)
      {
-         size = unmap_area_above_user_limit( ptr, size );
-@@ -623,5 +718,13 @@
+@@ -625,6 +749,14 @@ static void *anon_mmap_tryfixed( void *start, size_t size, int prot, int flags )
          ptr = MAP_FAILED;
          errno = EEXIST;
      }
@@ -131,3 +169,4 @@ diff --git a/dlls/ntdll/unix/virtual.c b/dlls/ntdll/unix/virtual.c
 +#endif
      return ptr;
  }
+ 
