@@ -1,8 +1,7 @@
 diff --git a/dlls/ntdll/unix/virtual.c b/dlls/ntdll/unix/virtual.c
-index 6e5b515..9a2c901 100644
 --- a/dlls/ntdll/unix/virtual.c
 +++ b/dlls/ntdll/unix/virtual.c
-@@ -589,9 +589,112 @@ static size_t unmap_area_above_user_limit( void *addr, size_t size )
+@@ -29,9 +29,156 @@
  }
  
  
@@ -19,25 +18,51 @@ index 6e5b515..9a2c901 100644
 +static UINT_PTR wios_first_teb_fixed_map_final_result;
 +static int wios_first_teb_fixed_map_final_errno;
 +
++static unsigned int wios_ios_address_model_active;
++static unsigned int wios_shared_data_fixed_status;
++static unsigned int wios_shared_data_alias_status;
++static UINT_PTR wios_shared_data_host_alias;
++static unsigned int wios_teb_block_reserve_status;
++static unsigned int wios_teb_block_commit_status;
++static UINT_PTR wios_teb_block_address;
++static UINT_PTR wios_first_teb_address;
++static UINT_PTR wios_first_peb_address;
++static int wios_teb_key_create_status;
++static int wios_teb_key_set_status;
++static unsigned int wios_first_teb_completed;
++
++static int __attribute__((unused)) wios_ios_address_model_probe(void)
++{
++    const char *probe = getenv( "WIOS_FIRST_TEB_PROBE" );
++    return probe && (!strcmp( probe, "shared_user_data" ) ||
++                     !strcmp( probe, "ios_address_model" ));
++}
++
 +static int wios_capture_first_teb_fixed_map( void *start )
 +{
 +    const char *probe = getenv( "WIOS_FIRST_TEB_PROBE" );
 +
-+    return start == user_shared_data && probe && !strcmp( probe, "shared_user_data" );
++    return start == user_shared_data && probe &&
++           (!strcmp( probe, "shared_user_data" ) || !strcmp( probe, "ios_address_model" ));
 +}
 +
 +__attribute__((visibility("default")))
 +int wios_ntdll_get_first_teb_fixed_map_mach_result(void)
 +{
++    if (wios_ios_address_model_active && !wios_shared_data_alias_status &&
++        wios_shared_data_host_alias && wios_shared_data_host_alias != 0x7ffe0000)
++        return -1;
 +    return wios_first_teb_fixed_map_captured ? wios_first_teb_fixed_map_mach_ret : -1;
 +}
 +
 +__attribute__((visibility("default")))
 +const char *wios_ntdll_get_first_teb_fixed_map_probe(void)
 +{
-+    static char buffer[512];
++    static char buffer[1024];
 +    const char *primitive = "UNKNOWN";
 +    const char *mach_status = "NOT_CALLED_OR_OTHER";
++    const char *address_model = "FIXED";
++    const char *complete = wios_first_teb_completed ? "YES" : "NO";
 +
 +    if (!wios_first_teb_fixed_map_captured)
 +        return "WINE_FIRST_TEB_FIXED_MAP=NOT_CAPTURED";
@@ -60,10 +85,22 @@ index 6e5b515..9a2c901 100644
 +    case KERN_NO_SPACE: mach_status = "KERN_NO_SPACE"; break;
 +    }
 +
++    if (wios_ios_address_model_active)
++    {
++        if (!wios_shared_data_fixed_status) address_model = "FIXED_NATIVE";
++        else if (!wios_shared_data_alias_status && wios_shared_data_host_alias)
++            address_model = "HIGH_ALIAS_PROBE";
++        else address_model = "ALIAS_FAILED";
++    }
++
 +    snprintf( buffer, sizeof(buffer),
 +              "WINE_FIRST_TEB_FIXED_MAP=primitive=%s requested=0x%016llX size=0x%llX "
 +              "prot=0x%X flags=0x%X raw=0x%016llX mach_ret=%d raw_errno=%d "
-+              "final=0x%016llX final_errno=%d mach_status=%s",
++              "final=0x%016llX final_errno=%d mach_status=%s "
++              "address_model=%s fixed_status=0x%08X alias_status=0x%08X alias=0x%016llX "
++              "teb_reserve_status=0x%08X teb_block=0x%016llX "
++              "teb_commit_status=0x%08X teb=0x%016llX peb=0x%016llX "
++              "key_create=%d key_set=%d first_teb_complete=%s",
 +              primitive,
 +              (unsigned long long)wios_first_teb_fixed_map_requested,
 +              (unsigned long long)wios_first_teb_fixed_map_size,
@@ -73,7 +110,13 @@ index 6e5b515..9a2c901 100644
 +              wios_first_teb_fixed_map_mach_ret,
 +              wios_first_teb_fixed_map_raw_errno,
 +              (unsigned long long)wios_first_teb_fixed_map_final_result,
-+              wios_first_teb_fixed_map_final_errno, mach_status );
++              wios_first_teb_fixed_map_final_errno, mach_status,
++              address_model, wios_shared_data_fixed_status, wios_shared_data_alias_status,
++              (unsigned long long)wios_shared_data_host_alias,
++              wios_teb_block_reserve_status, (unsigned long long)wios_teb_block_address,
++              wios_teb_block_commit_status, (unsigned long long)wios_first_teb_address,
++              (unsigned long long)wios_first_peb_address,
++              wios_teb_key_create_status, wios_teb_key_set_status, complete );
 +    return buffer;
 +}
 +#endif
@@ -115,10 +158,11 @@ index 6e5b515..9a2c901 100644
  
  #ifdef MAP_FIXED_NOREPLACE
      ptr = mmap( start, size, prot, MAP_FIXED_NOREPLACE | MAP_PRIVATE | MAP_ANON | flags, -1, 0 );
-@@ -600,11 +703,40 @@ static void *anon_mmap_tryfixed( void *start, size_t size, int prot, int flags )
+@@ -40,11 +187,40 @@
  #elif defined(__FreeBSD__) || defined(__FreeBSD_kernel__)
      ptr = mmap( start, size, prot, MAP_FIXED | MAP_EXCL | MAP_PRIVATE | MAP_ANON | flags, -1, 0 );
      if (ptr == MAP_FAILED && errno == EINVAL) errno = EEXIST;
+-#elif defined(__APPLE__)
 +#elif defined(__APPLE__) && defined(WINE_IOS)
 +    /* The iPhoneOS SDK exposes native-width vm_map, not mach_vm_map.
 +     * VM_FLAGS_FIXED without OVERWRITE atomically refuses occupied ranges.
@@ -145,7 +189,7 @@ index 6e5b515..9a2c901 100644
 +                ret == KERN_PROTECTION_FAILURE ? EACCES : ENOMEM;
 +        ptr = MAP_FAILED;
 +    }
- #elif defined(__APPLE__) && !defined(WINE_IOS)
++#elif defined(__APPLE__) && !defined(WINE_IOS)
      mach_vm_address_t result = (mach_vm_address_t)start;
      kern_return_t ret = mach_vm_map( mach_task_self(), &result, size, 0, VM_FLAGS_FIXED,
                                       MEMORY_OBJECT_NULL, 0, 0, prot, VM_PROT_ALL, VM_INHERIT_COPY );
@@ -156,21 +200,21 @@ index 6e5b515..9a2c901 100644
      if (!ret)
      {
          if ((ptr = anon_mmap_fixed( start, size, prot, flags )) == MAP_FAILED)
-@@ -617,6 +749,13 @@ static void *anon_mmap_tryfixed( void *start, size_t size, int prot, int flags )
-     }
+@@ -58,6 +234,13 @@
  #else
      ptr = mmap( start, size, prot, MAP_PRIVATE | MAP_ANON | flags, -1, 0 );
-+#endif
+ #endif
 +#if defined(__APPLE__) && defined(__MACH__) && defined(WINE_IOS)
 +    if (wios_capture)
 +    {
 +        wios_first_teb_fixed_map_raw_result = (UINT_PTR)ptr;
 +        wios_first_teb_fixed_map_raw_errno = ptr == MAP_FAILED ? errno : 0;
 +    }
- #endif
++#endif
      if (ptr != MAP_FAILED && ptr != start)
      {
-@@ -625,6 +764,14 @@ static void *anon_mmap_tryfixed( void *start, size_t size, int prot, int flags )
+         size = unmap_area_above_user_limit( ptr, size );
+@@ -65,6 +248,14 @@
          ptr = MAP_FAILED;
          errno = EEXIST;
      }
@@ -185,3 +229,147 @@ index 6e5b515..9a2c901 100644
      return ptr;
  }
  
+@@ -435,11 +626,32 @@
+     SIZE_T data_size = page_size;
+     SIZE_T block_size = signal_stack_mask + 1;
+     SIZE_T total = 32 * block_size;
++#if defined(__APPLE__) && defined(__MACH__) && defined(WINE_IOS)
++    int ios_address_probe = wios_ios_address_model_probe();
++    int key_status = 0;
++    int set_status = 0;
++
++    if (ios_address_probe)
++    {
++        wios_ios_address_model_active = 1;
++        wios_shared_data_fixed_status = 0;
++        wios_shared_data_alias_status = 0;
++        wios_shared_data_host_alias = 0;
++        wios_teb_block_reserve_status = 0;
++        wios_teb_block_commit_status = 0;
++        wios_teb_block_address = 0;
++        wios_first_teb_address = 0;
++        wios_first_peb_address = 0;
++        wios_teb_key_create_status = 0;
++        wios_teb_key_set_status = 0;
++        wios_first_teb_completed = 0;
++    }
++#endif
+ 
+     /* reserve space for shared user data */
+ #if defined(__APPLE__) && defined(__MACH__) && defined(WINE_IOS)
+     if (getenv( "WIOS_FIRST_TEB_PROBE" ) &&
+-        !strcmp( getenv( "WIOS_FIRST_TEB_PROBE" ), "shared_user_data" ))
++        (!strcmp( getenv( "WIOS_FIRST_TEB_PROBE" ), "shared_user_data" ) || ios_address_probe))
+     {
+         wios_first_teb_shared_data_view_conflict =
+             find_view_range( user_shared_data, data_size ) ? 1u : 0u;
+@@ -450,8 +662,39 @@
+     status = NtAllocateVirtualMemory( NtCurrentProcess(), (void **)&user_shared_data, 0, &data_size,
+                                       MEM_RESERVE | MEM_COMMIT, PAGE_READONLY );
+ #if defined(__APPLE__) && defined(__MACH__) && defined(WINE_IOS)
+-    if (getenv( "WIOS_FIRST_TEB_PROBE" ) &&
+-        !strcmp( getenv( "WIOS_FIRST_TEB_PROBE" ), "shared_user_data" ))
++    if (ios_address_probe)
++    {
++        void *alias = NULL;
++
++        wios_first_teb_shared_data_probe_reached = 1;
++        wios_shared_data_fixed_status = status;
++        if (status && wios_first_teb_fixed_map_mach_ret == KERN_INVALID_ADDRESS)
++        {
++            data_size = page_size;
++            wios_shared_data_alias_status =
++                NtAllocateVirtualMemory( NtCurrentProcess(), &alias, 0, &data_size,
++                                         MEM_RESERVE | MEM_COMMIT, PAGE_READONLY );
++            if (!wios_shared_data_alias_status)
++            {
++                user_shared_data = alias;
++                wios_shared_data_host_alias = (UINT_PTR)alias;
++                status = 0;
++            }
++        }
++        else if (!status)
++        {
++            wios_shared_data_host_alias = (UINT_PTR)user_shared_data;
++        }
++        else
++        {
++            wios_shared_data_alias_status = status;
++        }
++
++        wios_first_teb_shared_data_probe_status = status;
++        if (status) return NULL;
++    }
++    else if (getenv( "WIOS_FIRST_TEB_PROBE" ) &&
++             !strcmp( getenv( "WIOS_FIRST_TEB_PROBE" ), "shared_user_data" ))
+     {
+         wios_first_teb_shared_data_probe_reached = 1;
+         wios_first_teb_shared_data_probe_status = status;
+@@ -464,15 +707,67 @@
+         exit(1);
+     }
+ 
++#if defined(__APPLE__) && defined(__MACH__) && defined(WINE_IOS)
++    status = NtAllocateVirtualMemory( NtCurrentProcess(), &teb_block,
++                                      ios_address_probe ? 0 : (is_win64 ? limit_2g - 1 : 0),
++                                      &total, MEM_RESERVE | MEM_TOP_DOWN, PAGE_READWRITE );
++    if (ios_address_probe)
++    {
++        wios_teb_block_reserve_status = status;
++        wios_teb_block_address = (UINT_PTR)teb_block;
++        if (status)
++        {
++            wios_first_teb_shared_data_probe_status = status;
++            return NULL;
++        }
++    }
++#else
+     NtAllocateVirtualMemory( NtCurrentProcess(), &teb_block, is_win64 ? limit_2g - 1 : 0, &total,
+                              MEM_RESERVE | MEM_TOP_DOWN, PAGE_READWRITE );
++#endif
+     teb_block_pos = 30;
+     ptr = (char *)teb_block + 30 * block_size;
+     data_size = 2 * block_size;
++#if defined(__APPLE__) && defined(__MACH__) && defined(WINE_IOS)
++    status = NtAllocateVirtualMemory( NtCurrentProcess(), (void **)&ptr, 0, &data_size,
++                                      MEM_COMMIT, PAGE_READWRITE );
++    if (ios_address_probe)
++    {
++        wios_teb_block_commit_status = status;
++        if (status)
++        {
++            wios_first_teb_shared_data_probe_status = status;
++            return NULL;
++        }
++    }
++#else
+     NtAllocateVirtualMemory( NtCurrentProcess(), (void **)&ptr, 0, &data_size, MEM_COMMIT, PAGE_READWRITE );
++#endif
+     peb = (PEB *)((char *)teb_block + 31 * block_size + (is_win64 ? 0 : page_size));
+     teb = init_teb( ptr, FALSE );
++#if defined(__APPLE__) && defined(__MACH__) && defined(WINE_IOS)
++    if (ios_address_probe)
++    {
++        wios_first_teb_address = (UINT_PTR)teb;
++        wios_first_peb_address = (UINT_PTR)peb;
++    }
++    key_status = pthread_key_create( &teb_key, NULL );
++    if (!key_status) set_status = pthread_setspecific( teb_key, teb );
++    if (ios_address_probe)
++    {
++        wios_teb_key_create_status = key_status;
++        wios_teb_key_set_status = set_status;
++        wios_first_teb_completed = teb && !key_status && !set_status;
++        if (!wios_first_teb_completed)
++        {
++            wios_first_teb_shared_data_probe_status = STATUS_UNSUCCESSFUL;
++            return NULL;
++        }
++        wios_first_teb_shared_data_probe_status = STATUS_SUCCESS;
++    }
++#else
+     pthread_key_create( &teb_key, NULL );
+     pthread_setspecific( teb_key, teb );
++#endif
+     return teb;
+ }
