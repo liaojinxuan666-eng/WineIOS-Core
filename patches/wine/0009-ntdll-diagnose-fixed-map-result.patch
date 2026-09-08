@@ -1,8 +1,8 @@
 diff --git a/dlls/ntdll/unix/virtual.c b/dlls/ntdll/unix/virtual.c
-index 6e5b515..7e0b83f 100644
+index 6e5b515..9a2c901 100644
 --- a/dlls/ntdll/unix/virtual.c
 +++ b/dlls/ntdll/unix/virtual.c
-@@ -589,9 +589,97 @@ static size_t unmap_area_above_user_limit( void *addr, size_t size )
+@@ -589,9 +589,112 @@ static size_t unmap_area_above_user_limit( void *addr, size_t size )
  }
  
  
@@ -27,10 +27,17 @@ index 6e5b515..7e0b83f 100644
 +}
 +
 +__attribute__((visibility("default")))
++int wios_ntdll_get_first_teb_fixed_map_mach_result(void)
++{
++    return wios_first_teb_fixed_map_captured ? wios_first_teb_fixed_map_mach_ret : -1;
++}
++
++__attribute__((visibility("default")))
 +const char *wios_ntdll_get_first_teb_fixed_map_probe(void)
 +{
 +    static char buffer[512];
 +    const char *primitive = "UNKNOWN";
++    const char *mach_status = "NOT_CALLED_OR_OTHER";
 +
 +    if (!wios_first_teb_fixed_map_captured)
 +        return "WINE_FIRST_TEB_FIXED_MAP=NOT_CAPTURED";
@@ -45,10 +52,18 @@ index 6e5b515..7e0b83f 100644
 +    case 6: primitive = "VM_MAP_FIXED_IOS"; break;
 +    }
 +
++    switch (wios_first_teb_fixed_map_mach_ret)
++    {
++    case KERN_SUCCESS: mach_status = "KERN_SUCCESS"; break;
++    case KERN_INVALID_ADDRESS: mach_status = "KERN_INVALID_ADDRESS"; break;
++    case KERN_PROTECTION_FAILURE: mach_status = "KERN_PROTECTION_FAILURE"; break;
++    case KERN_NO_SPACE: mach_status = "KERN_NO_SPACE"; break;
++    }
++
 +    snprintf( buffer, sizeof(buffer),
 +              "WINE_FIRST_TEB_FIXED_MAP=primitive=%s requested=0x%016llX size=0x%llX "
 +              "prot=0x%X flags=0x%X raw=0x%016llX mach_ret=%d raw_errno=%d "
-+              "final=0x%016llX final_errno=%d",
++              "final=0x%016llX final_errno=%d mach_status=%s",
 +              primitive,
 +              (unsigned long long)wios_first_teb_fixed_map_requested,
 +              (unsigned long long)wios_first_teb_fixed_map_size,
@@ -58,7 +73,7 @@ index 6e5b515..7e0b83f 100644
 +              wios_first_teb_fixed_map_mach_ret,
 +              wios_first_teb_fixed_map_raw_errno,
 +              (unsigned long long)wios_first_teb_fixed_map_final_result,
-+              wios_first_teb_fixed_map_final_errno );
++              wios_first_teb_fixed_map_final_errno, mach_status );
 +    return buffer;
 +}
 +#endif
@@ -100,7 +115,7 @@ index 6e5b515..7e0b83f 100644
  
  #ifdef MAP_FIXED_NOREPLACE
      ptr = mmap( start, size, prot, MAP_FIXED_NOREPLACE | MAP_PRIVATE | MAP_ANON | flags, -1, 0 );
-@@ -600,11 +688,40 @@ static void *anon_mmap_tryfixed( void *start, size_t size, int prot, int flags )
+@@ -600,11 +703,40 @@ static void *anon_mmap_tryfixed( void *start, size_t size, int prot, int flags )
  #elif defined(__FreeBSD__) || defined(__FreeBSD_kernel__)
      ptr = mmap( start, size, prot, MAP_FIXED | MAP_EXCL | MAP_PRIVATE | MAP_ANON | flags, -1, 0 );
      if (ptr == MAP_FAILED && errno == EINVAL) errno = EEXIST;
@@ -141,7 +156,7 @@ index 6e5b515..7e0b83f 100644
      if (!ret)
      {
          if ((ptr = anon_mmap_fixed( start, size, prot, flags )) == MAP_FAILED)
-@@ -617,6 +734,13 @@ static void *anon_mmap_tryfixed( void *start, size_t size, int prot, int flags )
+@@ -617,6 +749,13 @@ static void *anon_mmap_tryfixed( void *start, size_t size, int prot, int flags )
      }
  #else
      ptr = mmap( start, size, prot, MAP_PRIVATE | MAP_ANON | flags, -1, 0 );
@@ -155,7 +170,7 @@ index 6e5b515..7e0b83f 100644
  #endif
      if (ptr != MAP_FAILED && ptr != start)
      {
-@@ -625,6 +749,14 @@ static void *anon_mmap_tryfixed( void *start, size_t size, int prot, int flags )
+@@ -625,6 +764,14 @@ static void *anon_mmap_tryfixed( void *start, size_t size, int prot, int flags )
          ptr = MAP_FAILED;
          errno = EEXIST;
      }

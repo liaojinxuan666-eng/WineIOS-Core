@@ -332,6 +332,8 @@ static int probe_wine_main_entry(const wios_runtime_config *config)
     uint32_t first_teb_shared_data_status;
     uint32_t first_teb_shared_data_view_conflict;
     int32_t first_teb_shared_data_reserved_state;
+    wios_ntdll_get_first_teb_probe_i32_fn get_fixed_map_mach_result;
+    int32_t fixed_map_mach_result;
     const char *first_teb_fixed_map_probe;
     static char arg0[] = "wine";
     static char arg1[] = "__wios_main_entry_probe__";
@@ -439,11 +441,13 @@ static int probe_wine_main_entry(const wios_runtime_config *config)
         ntdll_handle, "wios_ntdll_get_first_teb_shared_data_reserved_state");
     get_first_teb_fixed_map_probe = (wios_ntdll_get_first_teb_probe_string_fn)dlsym(
         ntdll_handle, "wios_ntdll_get_first_teb_fixed_map_probe");
+    get_fixed_map_mach_result = (wios_ntdll_get_first_teb_probe_i32_fn)dlsym(
+        ntdll_handle, "wios_ntdll_get_first_teb_fixed_map_mach_result");
     if (!get_first_teb_shared_data_probe_reached ||
         !get_first_teb_shared_data_probe_status ||
         !get_first_teb_shared_data_view_conflict ||
         !get_first_teb_shared_data_reserved_state ||
-        !get_first_teb_fixed_map_probe)
+        !get_first_teb_fixed_map_probe || !get_fixed_map_mach_result)
     {
         dl_error = dlerror();
         set_error(dl_error ? dl_error : "NTDLL first-TEB shared-data probe symbol missing");
@@ -536,9 +540,17 @@ static int probe_wine_main_entry(const wios_runtime_config *config)
 
     if (first_teb_shared_data_status != 0u)
     {
-        snprintf(error_buffer, sizeof(error_buffer),
-                 "Wine shared user data allocation failed with 0x%08X",
-                 (unsigned int)first_teb_shared_data_status);
+        fixed_map_mach_result = get_fixed_map_mach_result();
+        if (fixed_map_mach_result == 1) /* Darwin KERN_INVALID_ADDRESS */
+        {
+            set_error("vm_map rejected address 0x7ffe0000 (KERN_INVALID_ADDRESS); "
+                      "the translated Wine status is not a measurement of available RAM");
+            runtime_log(config, "WINE_ADDRESS_MODEL=SHARED_DATA_FIXED_ADDRESS_REJECTED");
+        }
+        else
+            snprintf(error_buffer, sizeof(error_buffer),
+                     "Wine shared user data allocation failed with 0x%08X (Mach result %d)",
+                     (unsigned int)first_teb_shared_data_status, (int)fixed_map_mach_result);
         runtime_log(config, "WINE_FIRST_TEB_SHARED_DATA_ALLOC=FAIL");
         runtime_log(config, "WINE_MAIN_THREAD_FIRST_TEB=BLOCKED");
         runtime_log(config, "WINE_MAIN_THREAD_INIT=FAIL");
@@ -603,7 +615,7 @@ static int runtime_initialize(const wios_runtime_config *config)
     }
 
     runtime_log(config, "RUNTIME_ABI=PASS");
-    runtime_log(config, "WINE_RUNTIME_REVISION=IOS_FIXED_MAP_1");
+    runtime_log(config, "WINE_RUNTIME_REVISION=IOS_TRANSPORT_2");
     runtime_log(config, "WINE_RUNTIME_ROOT=READY");
 
     if (verify_runtime_layout(config, runtime_root) != 0)

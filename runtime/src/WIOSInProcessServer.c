@@ -13,6 +13,14 @@
 #define WIOS_STATUS_NOT_IMPLEMENTED   0xC0000002u
 #define WIOS_STATUS_INVALID_HANDLE    0xC0000008u
 #define WIOS_STATUS_INVALID_PARAMETER 0xC000000Du
+#define WIOS_STATUS_PORT_DISCONNECTED 0xC0000037u
+#define WIOS_STATUS_IO_TIMEOUT        0xC00000B5u
+
+/* cond_wait releases server.mutex. A separate gate owns the single mailbox
+ * until its caller has copied the reply, including while that caller waits. */
+static pthread_mutex_t request_mutex = PTHREAD_MUTEX_INITIALIZER;
+static pthread_mutex_t lifecycle_mutex = PTHREAD_MUTEX_INITIALIZER;
+static pthread_mutex_t error_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 enum
 {
@@ -50,8 +58,8 @@ typedef struct
 } wios_inproc_server_state;
 
 static wios_inproc_server_state server = {
-    PTHREAD_MUTEX_INITIALIZER,
-    PTHREAD_COND_INITIALIZER
+    .mutex = PTHREAD_MUTEX_INITIALIZER,
+    .cond = PTHREAD_COND_INITIALIZER
 };
 
 /*
@@ -71,13 +79,17 @@ _Static_assert(sizeof(struct close_handle_request) == 16,
 static void set_error(const char *text)
 {
     if (!text) text = "unknown in-process server error";
+    pthread_mutex_lock(&error_mutex);
     snprintf(server.last_error, sizeof(server.last_error), "%s", text);
+    pthread_mutex_unlock(&error_mutex);
 }
 
 static void set_pthread_error(const char *operation, int error)
 {
+    pthread_mutex_lock(&error_mutex);
     snprintf(server.last_error, sizeof(server.last_error),
              "%s failed: %d (%s)", operation, error, strerror(error));
+    pthread_mutex_unlock(&error_mutex);
 }
 
 static void log_line(const char *line)
@@ -116,7 +128,7 @@ static struct timespec deadline_after_ms(long milliseconds)
     return deadline;
 }
 
-int wios_inproc_server_attach_close_handle(wios_close_handle_dispatch dispatch)
+static int attach_close_handle_serial(wios_close_handle_dispatch dispatch)
 {
     if (!dispatch)
     {
@@ -125,7 +137,7 @@ int wios_inproc_server_attach_close_handle(wios_close_handle_dispatch dispatch)
     }
 
     pthread_mutex_lock(&server.mutex);
-    if (server.running)
+    if (server.created || server.running)
     {
         set_error("cannot attach close_handle dispatcher while server is running");
         pthread_mutex_unlock(&server.mutex);
@@ -224,14 +236,14 @@ static void *server_thread_main(void *opaque)
     return NULL;
 }
 
-int wios_inproc_server_start(wios_log_callback log_callback, void *log_context)
+static int server_start_serial(wios_log_callback log_callback, void *log_context)
 {
     struct timespec deadline;
     int result;
 
     pthread_mutex_lock(&server.mutex);
 
-    if (server.running)
+    if (server.running && server.ready && !server.stop_requested)
     {
         server.log_callback = log_callback;
         server.log_context = log_context;
@@ -239,7 +251,14 @@ int wios_inproc_server_start(wios_log_callback log_callback, void *log_context)
         return 0;
     }
 
-    server.created = 1;
+    if (server.created)
+    {
+        set_error("stop and join the previous server before restarting");
+        pthread_mutex_unlock(&server.mutex);
+        return -4;
+    }
+
+    server.created = 0;
     server.running = 1;
     server.thread_started = 0;
     server.ready = 0;
@@ -252,7 +271,7 @@ int wios_inproc_server_start(wios_log_callback log_callback, void *log_context)
     memset(&server.wine_reply, 0, sizeof(server.wine_reply));
     server.log_callback = log_callback;
     server.log_context = log_context;
-    server.last_error[0] = '\0';
+    set_error("");
 
     pthread_mutex_unlock(&server.mutex);
     log_line("INPROC_SERVER_CREATE=PASS");
@@ -271,6 +290,7 @@ int wios_inproc_server_start(wios_log_callback log_callback, void *log_context)
     deadline = deadline_after_ms(2000);
 
     pthread_mutex_lock(&server.mutex);
+    server.created = 1;
     while (!server.thread_started)
     {
         result = pthread_cond_timedwait(&server.cond, &server.mutex, &deadline);
@@ -284,11 +304,14 @@ int wios_inproc_server_start(wios_log_callback log_callback, void *log_context)
 
     if (!server.thread_started)
     {
-        if (!server.last_error[0]) set_error("server thread start timed out");
+        if (!wios_inproc_server_last_error()[0]) set_error("server thread start timed out");
         server.stop_requested = 1;
         pthread_cond_broadcast(&server.cond);
         pthread_mutex_unlock(&server.mutex);
         pthread_join(server.thread, NULL);
+        pthread_mutex_lock(&server.mutex);
+        server.created = 0;
+        pthread_mutex_unlock(&server.mutex);
         log_line("INPROC_SERVER_THREAD=FAIL");
         return -2;
     }
@@ -304,6 +327,9 @@ int wios_inproc_server_start(wios_log_callback log_callback, void *log_context)
         pthread_cond_broadcast(&server.cond);
         pthread_mutex_unlock(&server.mutex);
         pthread_join(server.thread, NULL);
+        pthread_mutex_lock(&server.mutex);
+        server.created = 0;
+        pthread_mutex_unlock(&server.mutex);
         log_line("INPROC_SERVER_THREAD=FAIL");
         return -3;
     }
@@ -320,7 +346,7 @@ static int submit_request_and_wait(int kind, uint64_t *seq_out)
     uint64_t seq;
     int result;
 
-    if (!server.running || !server.ready)
+    if (!server.running || !server.ready || server.stop_requested)
     {
         set_error("in-process server is not ready");
         return -1;
@@ -337,12 +363,17 @@ static int submit_request_and_wait(int kind, uint64_t *seq_out)
         result = pthread_cond_timedwait(&server.cond, &server.mutex, &deadline);
         if (result == ETIMEDOUT)
         {
+            if (server.response_seq == seq) break;
             set_error("in-process server request timed out");
+            server.stop_requested = 1;
+            pthread_cond_broadcast(&server.cond);
             return -2;
         }
         if (result != 0)
         {
             set_pthread_error("pthread_cond_timedwait(request)", result);
+            server.stop_requested = 1;
+            pthread_cond_broadcast(&server.cond);
             return -3;
         }
     }
@@ -357,7 +388,17 @@ static int submit_request_and_wait(int kind, uint64_t *seq_out)
     return server.response_code;
 }
 
-uint32_t wios_inproc_server_call(void *req_ptr)
+static uint32_t fail_request(struct __server_request_info *req, uint32_t status)
+{
+    if (req)
+    {
+        memset(&req->u.reply, 0, sizeof(req->u.reply));
+        req->u.reply.reply_header.error = status;
+    }
+    return status;
+}
+
+static uint32_t server_call_serial(void *req_ptr)
 {
     struct __server_request_info *req = req_ptr;
     uint32_t status;
@@ -371,11 +412,11 @@ uint32_t wios_inproc_server_call(void *req_ptr)
 
     pthread_mutex_lock(&server.mutex);
 
-    if (!server.running || !server.ready)
+    if (!server.running || !server.ready || server.stop_requested)
     {
         set_error("in-process server is not ready");
         pthread_mutex_unlock(&server.mutex);
-        return WIOS_STATUS_NOT_IMPLEMENTED;
+        return fail_request(req, WIOS_STATUS_PORT_DISCONNECTED);
     }
 
     /*
@@ -383,14 +424,26 @@ uint32_t wios_inproc_server_call(void *req_ptr)
      * variable request/reply payload, so accepting anything else here could
      * silently corrupt Wine's protocol state.
      */
-    if (req->u.req.request_header.req != REQ_close_handle ||
-        req->u.req.request_header.request_size != 0 ||
+    if (req->u.req.request_header.req < 0 ||
+        req->u.req.request_header.req >= REQ_NB_REQUESTS)
+    {
+        set_error("invalid Wine request opcode");
+        pthread_mutex_unlock(&server.mutex);
+        return fail_request(req, WIOS_STATUS_INVALID_PARAMETER);
+    }
+    if (req->u.req.request_header.req != REQ_close_handle)
+    {
+        set_error("Wine request is not implemented by the in-process server");
+        pthread_mutex_unlock(&server.mutex);
+        return fail_request(req, WIOS_STATUS_NOT_IMPLEMENTED);
+    }
+    if (req->u.req.request_header.request_size != 0 ||
         req->u.req.request_header.reply_size != 0 ||
         req->data_count != 0)
     {
         set_error("Wine NTDLL bridge frame is not supported by this phase");
         pthread_mutex_unlock(&server.mutex);
-        return WIOS_STATUS_NOT_IMPLEMENTED;
+        return fail_request(req, WIOS_STATUS_INVALID_PARAMETER);
     }
 
     server.wine_request = req->u.req;
@@ -400,7 +453,8 @@ uint32_t wios_inproc_server_call(void *req_ptr)
     if (response != 0)
     {
         pthread_mutex_unlock(&server.mutex);
-        return WIOS_STATUS_NOT_IMPLEMENTED;
+        return fail_request(req, response == -2 ? WIOS_STATUS_IO_TIMEOUT :
+                                                 WIOS_STATUS_PORT_DISCONNECTED);
     }
 
     req->u.reply = server.wine_reply;
@@ -410,7 +464,7 @@ uint32_t wios_inproc_server_call(void *req_ptr)
     return status;
 }
 
-int wios_inproc_server_ping(void)
+static int server_ping_serial(void)
 {
     int response;
 
@@ -428,7 +482,7 @@ int wios_inproc_server_ping(void)
     return 0;
 }
 
-int wios_inproc_server_probe_wine_protocol(void)
+static int server_probe_wine_protocol_serial(void)
 {
     struct close_handle_request *request;
     struct reply_header reply;
@@ -510,12 +564,12 @@ int wios_inproc_server_probe_wine_protocol(void)
     return 0;
 }
 
-void wios_inproc_server_stop(void)
+static void server_stop_serial(void)
 {
     int should_join = 0;
 
     pthread_mutex_lock(&server.mutex);
-    if (server.running)
+    if (server.created)
     {
         server.stop_requested = 1;
         pthread_cond_broadcast(&server.cond);
@@ -526,11 +580,76 @@ void wios_inproc_server_stop(void)
     if (should_join)
     {
         pthread_join(server.thread, NULL);
+        pthread_mutex_lock(&server.mutex);
+        server.created = 0;
+        server.close_handle_dispatch = NULL;
+        pthread_mutex_unlock(&server.mutex);
         log_line("INPROC_SERVER_STOP=PASS");
     }
 }
 
 const char *wios_inproc_server_last_error(void)
 {
-    return server.last_error[0] ? server.last_error : "";
+    static _Thread_local char snapshot[512];
+    pthread_mutex_lock(&error_mutex);
+    memcpy(snapshot, server.last_error, sizeof(snapshot));
+    pthread_mutex_unlock(&error_mutex);
+    return snapshot;
+}
+
+int wios_inproc_server_attach_close_handle(wios_close_handle_dispatch dispatch)
+{
+    int result;
+    pthread_mutex_lock(&lifecycle_mutex);
+    result = attach_close_handle_serial(dispatch);
+    pthread_mutex_unlock(&lifecycle_mutex);
+    return result;
+}
+
+int wios_inproc_server_start(wios_log_callback callback, void *context)
+{
+    int result;
+    pthread_mutex_lock(&lifecycle_mutex);
+    pthread_mutex_lock(&request_mutex);
+    result = server_start_serial(callback, context);
+    pthread_mutex_unlock(&request_mutex);
+    pthread_mutex_unlock(&lifecycle_mutex);
+    return result;
+}
+
+void wios_inproc_server_stop(void)
+{
+    pthread_mutex_lock(&lifecycle_mutex);
+    server_stop_serial();
+    /* Drain the caller that owned the previous mailbox before any restart. */
+    pthread_mutex_lock(&request_mutex);
+    pthread_mutex_unlock(&request_mutex);
+    pthread_mutex_unlock(&lifecycle_mutex);
+}
+
+uint32_t wios_inproc_server_call(void *request)
+{
+    uint32_t result;
+    pthread_mutex_lock(&request_mutex);
+    result = server_call_serial(request);
+    pthread_mutex_unlock(&request_mutex);
+    return result;
+}
+
+int wios_inproc_server_ping(void)
+{
+    int result;
+    pthread_mutex_lock(&request_mutex);
+    result = server_ping_serial();
+    pthread_mutex_unlock(&request_mutex);
+    return result;
+}
+
+int wios_inproc_server_probe_wine_protocol(void)
+{
+    int result;
+    pthread_mutex_lock(&request_mutex);
+    result = server_probe_wine_protocol_serial();
+    pthread_mutex_unlock(&request_mutex);
+    return result;
 }

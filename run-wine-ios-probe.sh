@@ -57,6 +57,9 @@ bash "$PROJECT_ROOT/scripts/apply-wine-patches.sh" "$WINE_SOURCE"
 probe_step test-ios-fixed-map
 python3 "$PROJECT_ROOT/tests/test-ios-fixed-map.py" "$WINE_SOURCE"
 
+probe_step test-inproc-server
+python3 "$PROJECT_ROOT/tests/test-inproc-server.py" "$WINE_SOURCE"
+
 probe_step fetch-arm64-pe-toolchain
 mkdir -p "$PROJECT_ROOT/build/toolchains"
 if [[ ! -x "$LLVM_MINGW_ROOT/bin/aarch64-w64-mingw32-clang" ]]; then

@@ -32,6 +32,7 @@ prefix = r'''
 #define VM_INHERIT_COPY 1
 #define MEMORY_OBJECT_NULL 0
 #define KERN_SUCCESS 0
+#define KERN_INVALID_ADDRESS 1
 #define KERN_NO_SPACE 3
 #define KERN_PROTECTION_FAILURE 2
 typedef uintptr_t UINT_PTR;
@@ -86,6 +87,7 @@ static void check(int kr, int fail_remap, int expected_errno)
     assert(result == (expected_errno ? MAP_FAILED : user_shared_data));
     if (expected_errno) assert(errno == expected_errno);
     assert(wios_first_teb_fixed_map_mach_ret == kr);
+    assert(wios_ntdll_get_first_teb_fixed_map_mach_result() == kr);
     assert(wios_first_teb_fixed_map_final_errno == expected_errno);
     assert(strstr(wios_ntdll_get_first_teb_fixed_map_probe(), "primitive=VM_MAP_FIXED_IOS"));
 }
@@ -95,6 +97,8 @@ int main(void)
     check(KERN_SUCCESS, 0, 0);
     check(KERN_NO_SPACE, 0, EEXIST);
     check(KERN_PROTECTION_FAILURE, 0, EACCES);
+    check(KERN_INVALID_ADDRESS, 0, ENOMEM);
+    assert(strstr(wios_ntdll_get_first_teb_fixed_map_probe(), "mach_status=KERN_INVALID_ADDRESS"));
     check(6, 0, ENOMEM);
     check(KERN_SUCCESS, 1, ENOMEM);
     unsetenv("WIOS_FIRST_TEB_PROBE");
@@ -102,7 +106,8 @@ int main(void)
     map_result = 0; remap_fails = 0;
     assert(anon_mmap_tryfixed(user_shared_data, 16384, PROT_READ, 0) == user_shared_data);
     assert(!wios_first_teb_fixed_map_captured);
-    puts("PASS: 6 native fixed-map control-flow cases (mock VM)");
+    assert(wios_ntdll_get_first_teb_fixed_map_mach_result() == -1);
+    puts("PASS: 7 native fixed-map control-flow cases (mock VM)");
 }
 '''
 with tempfile.TemporaryDirectory(prefix="wios-map-test-") as temp:

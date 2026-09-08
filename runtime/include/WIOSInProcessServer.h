@@ -11,6 +11,13 @@ extern "C" {
 
 typedef uint32_t (*wios_close_handle_dispatch)(uint32_t handle);
 
+/* Lifecycle and client calls are serialized internally. Dispatchers execute on
+ * the worker and must return promptly; they and log callbacks must not re-enter
+ * these APIs. Stop joins the worker and detaches the dispatcher. Reattach before
+ * restarting. A timed-out mailbox must be stopped/joined before restart.
+ * last_error returns a thread-local snapshot, valid until that thread reads it
+ * again. Thread safety here does not make the Wine runtime itself reentrant. */
+
 int wios_inproc_server_attach_close_handle(wios_close_handle_dispatch dispatch);
 
 int wios_inproc_server_start(wios_log_callback log_callback, void *log_context);
