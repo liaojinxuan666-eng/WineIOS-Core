@@ -312,7 +312,7 @@ diff --git a/dlls/ntdll/unix/virtual.c b/dlls/ntdll/unix/virtual.c
 +#if defined(__APPLE__) && defined(__MACH__) && defined(WINE_IOS)
 +    status = NtAllocateVirtualMemory( NtCurrentProcess(), &teb_block,
 +                                      ios_address_probe ? 0 : (is_win64 ? limit_2g - 1 : 0),
-+                                      &total, MEM_RESERVE | MEM_TOP_DOWN, PAGE_READWRITE );
++                                      &total, MEM_RESERVE | (ios_address_probe ? 0 : MEM_TOP_DOWN), PAGE_READWRITE );
 +    if (ios_address_probe)
 +    {
 +        wios_teb_block_reserve_status = status;

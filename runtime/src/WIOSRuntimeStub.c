@@ -549,21 +549,28 @@ static int probe_wine_main_entry(const wios_runtime_config *config)
         }
         else
             snprintf(error_buffer, sizeof(error_buffer),
-                     "Wine shared user data allocation failed with 0x%08X (Mach result %d)",
+                     "Wine first-TEB setup failed with 0x%08X (fixed-map Mach result %d); see address_model and teb_reserve_status in diagnostics",
                      (unsigned int)first_teb_shared_data_status, (int)fixed_map_mach_result);
-        runtime_log(config, "WINE_FIRST_TEB_SHARED_DATA_ALLOC=FAIL");
+        runtime_log(config, "WINE_FIRST_TEB_SETUP=FAIL");
         runtime_log(config, "WINE_MAIN_THREAD_FIRST_TEB=BLOCKED");
         runtime_log(config, "WINE_MAIN_THREAD_INIT=FAIL");
         return -13;
     }
 
-    runtime_log(config, "WINE_FIRST_TEB_SHARED_DATA_ALLOC=PASS");
+    if (get_main_probe_result_stage() != WIOS_MAIN_PROBE_STAGE_FIRST_TEB)
+    {
+        set_error("Wine first-TEB probe returned without a completed TEB");
+        runtime_log(config, "WINE_FIRST_TEB_SETUP=INCOMPLETE");
+        return -13;
+    }
+    runtime_log(config, "WINE_FIRST_TEB_SETUP=PASS_HOST_PROBE_ONLY");
+    runtime_log(config, "WINE_GUEST_FIXED_ADDRESS_COMPATIBILITY=NOT_VALIDATED");
     runtime_log(config, "WINE_MAIN_THREAD_FIRST_TEB=PARTIAL");
     runtime_log(config, "WINE_MAIN_THREAD_INIT=PARTIAL");
-    runtime_log(config, "WINE_MAIN_STOP_AFTER=FIRST_TEB_SHARED_USER_DATA");
-    runtime_log(config, "WINE_TEB_BLOCK_RESERVE=NOT_RUN");
-    runtime_log(config, "WINE_TEB_BLOCK_COMMIT=NOT_RUN");
-    runtime_log(config, "WINE_TEB_INIT=NOT_RUN");
+    runtime_log(config, "WINE_MAIN_STOP_AFTER=FIRST_TEB");
+    runtime_log(config, "WINE_TEB_BLOCK_RESERVE=PASS");
+    runtime_log(config, "WINE_TEB_BLOCK_COMMIT=PASS");
+    runtime_log(config, "WINE_TEB_INIT=PASS");
     runtime_log(config, "WINE_SIGNAL_INIT_THREADING=NOT_RUN");
     runtime_log(config, "WINE_SERVER_INIT_PROCESS=NOT_RUN");
     runtime_log(config, "WINE_PREFIX_INIT=NOT_RUN");
