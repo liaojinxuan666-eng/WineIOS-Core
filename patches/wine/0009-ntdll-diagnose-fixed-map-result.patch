@@ -162,7 +162,7 @@ diff --git a/dlls/ntdll/unix/virtual.c b/dlls/ntdll/unix/virtual.c
  #elif defined(__FreeBSD__) || defined(__FreeBSD_kernel__)
      ptr = mmap( start, size, prot, MAP_FIXED | MAP_EXCL | MAP_PRIVATE | MAP_ANON | flags, -1, 0 );
      if (ptr == MAP_FAILED && errno == EINVAL) errno = EEXIST;
--#elif defined(__APPLE__)
+-#elif defined(__APPLE__) && !defined(WINE_IOS)
 +#elif defined(__APPLE__) && defined(WINE_IOS)
 +    /* The iPhoneOS SDK exposes native-width vm_map, not mach_vm_map.
 +     * VM_FLAGS_FIXED without OVERWRITE atomically refuses occupied ranges.
