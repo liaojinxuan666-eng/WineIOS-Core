@@ -117,3 +117,80 @@ with tempfile.TemporaryDirectory(prefix="wios-map-test-") as temp:
     subprocess.run(["cc", "-std=c11", "-D_GNU_SOURCE", "-Wall", "-Wextra", "-Werror",
                     str(test), "-o", str(binary)], check=True)
     subprocess.run([str(binary)], check=True)
+
+# Exercise the actual host-VM probe's error paths, including release on failure.
+host_probe = source[source.index('/* Host-address probe only.'):]
+host_probe = host_probe[:host_probe.rfind('#endif')]
+host_prefix = r'''
+#include <assert.h>
+#include <stdlib.h>
+#include <stdio.h>
+#include <pthread.h>
+#include "ntstatus.h"
+#define WIN32_NO_STATUS
+#include "windef.h"
+#include "winternl.h"
+#undef WIN32_NO_STATUS
+static TEB test_teb;
+static PEB test_peb, *peb = &test_peb;
+static pthread_key_t teb_key;
+static const SIZE_T host_page_size = 16384;
+static int fail_at, calls, frees;
+static void *allocation;
+#undef NtCurrentTeb
+#define NtCurrentTeb() (&test_teb)
+static NTSTATUS alloc_mock(HANDLE h, void **p, ULONG_PTR z, SIZE_T *s, ULONG f, ULONG prot)
+{
+    if (++calls == fail_at) return STATUS_NO_MEMORY;
+    if (f == MEM_RESERVE) { *p = allocation = calloc(1, *s); assert(*p); }
+    return 0;
+}
+static NTSTATUS protect_mock(HANDLE h, void **p, SIZE_T *s, ULONG prot, ULONG *old)
+{
+    if (++calls == fail_at) return STATUS_ACCESS_DENIED;
+    *old = PAGE_READWRITE; return 0;
+}
+static NTSTATUS query_mock(HANDLE h, const void *p, MEMORY_INFORMATION_CLASS c, void *out, SIZE_T n, SIZE_T *ret)
+{
+    MEMORY_BASIC_INFORMATION *i = out;
+    if (++calls == fail_at) return STATUS_INVALID_PARAMETER;
+    i->AllocationBase = allocation; i->RegionSize = host_page_size;
+    i->State = MEM_COMMIT; i->Protect = PAGE_READONLY; *ret = sizeof(*i); return 0;
+}
+static NTSTATUS free_mock(HANDLE h, void **p, SIZE_T *s, ULONG f)
+{
+    assert(*p == allocation && !*s && f == MEM_RELEASE);
+    free(*p); allocation = NULL; ++frees;
+    return ++calls == fail_at ? STATUS_UNSUCCESSFUL : 0;
+}
+#define NtAllocateVirtualMemory alloc_mock
+#define NtProtectVirtualMemory protect_mock
+#define NtQueryVirtualMemory query_mock
+#define NtFreeVirtualMemory free_mock
+'''
+host_main = r'''
+int main(void)
+{
+    int n;
+    assert(!pthread_key_create(&teb_key, NULL));
+    assert(wios_ntdll_probe_host_vm() != 0 && calls == 0);
+    test_teb.Tib.Self = &test_teb.Tib; test_teb.Peb = peb;
+    assert(!pthread_setspecific(teb_key, &test_teb));
+    for (n = 0; n <= 6; n++)
+    {
+        fail_at = n; calls = frees = 0;
+        assert((wios_ntdll_probe_host_vm() == 0) == (n == 0));
+        assert(frees == (n != 1) && allocation == NULL);
+    }
+    pthread_key_delete(teb_key);
+    puts("PASS: host VM probe success, missing TLS and six API failure/cleanup paths (mock NT APIs)");
+}
+'''
+with tempfile.TemporaryDirectory(prefix='wios-host-vm-') as temp:
+    c = pathlib.Path(temp) / 'test.c'
+    exe = pathlib.Path(temp) / 'test'
+    c.write_text(host_prefix + host_probe + host_main)
+    subprocess.run(['cc', '-D__WINESRC__', '-fms-extensions', '-pthread',
+                    '-I' + str(pathlib.Path(sys.argv[1]).resolve() / 'include'),
+                    str(c), '-o', str(exe)], check=True)
+    subprocess.run([str(exe)], check=True)

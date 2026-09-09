@@ -162,7 +162,6 @@ diff --git a/dlls/ntdll/unix/virtual.c b/dlls/ntdll/unix/virtual.c
  #elif defined(__FreeBSD__) || defined(__FreeBSD_kernel__)
      ptr = mmap( start, size, prot, MAP_FIXED | MAP_EXCL | MAP_PRIVATE | MAP_ANON | flags, -1, 0 );
      if (ptr == MAP_FAILED && errno == EINVAL) errno = EEXIST;
--#elif defined(__APPLE__) && !defined(WINE_IOS)
 +#elif defined(__APPLE__) && defined(WINE_IOS)
 +    /* The iPhoneOS SDK exposes native-width vm_map, not mach_vm_map.
 +     * VM_FLAGS_FIXED without OVERWRITE atomically refuses occupied ranges.
@@ -189,7 +188,7 @@ diff --git a/dlls/ntdll/unix/virtual.c b/dlls/ntdll/unix/virtual.c
 +                ret == KERN_PROTECTION_FAILURE ? EACCES : ENOMEM;
 +        ptr = MAP_FAILED;
 +    }
-+#elif defined(__APPLE__) && !defined(WINE_IOS)
+ #elif defined(__APPLE__) && !defined(WINE_IOS)
      mach_vm_address_t result = (mach_vm_address_t)start;
      kern_return_t ret = mach_vm_map( mach_task_self(), &result, size, 0, VM_FLAGS_FIXED,
                                       MEMORY_OBJECT_NULL, 0, 0, prot, VM_PROT_ALL, VM_INHERIT_COPY );
@@ -200,20 +199,20 @@ diff --git a/dlls/ntdll/unix/virtual.c b/dlls/ntdll/unix/virtual.c
      if (!ret)
      {
          if ((ptr = anon_mmap_fixed( start, size, prot, flags )) == MAP_FAILED)
-@@ -617,6 +764,13 @@
+@@ -617,6 +793,13 @@
+     }
  #else
      ptr = mmap( start, size, prot, MAP_PRIVATE | MAP_ANON | flags, -1, 0 );
- #endif
++#endif
 +#if defined(__APPLE__) && defined(__MACH__) && defined(WINE_IOS)
 +    if (wios_capture)
 +    {
 +        wios_first_teb_fixed_map_raw_result = (UINT_PTR)ptr;
 +        wios_first_teb_fixed_map_raw_errno = ptr == MAP_FAILED ? errno : 0;
 +    }
-+#endif
+ #endif
      if (ptr != MAP_FAILED && ptr != start)
      {
-         size = unmap_area_above_user_limit( ptr, size );
 @@ -625,6 +808,14 @@
          ptr = MAP_FAILED;
          errno = EEXIST;
@@ -305,7 +304,7 @@ diff --git a/dlls/ntdll/unix/virtual.c b/dlls/ntdll/unix/virtual.c
      {
          wios_first_teb_shared_data_probe_reached = 1;
          wios_first_teb_shared_data_probe_status = status;
-@@ -4104,15 +4347,67 @@
+@@ -4104,16 +4347,68 @@
          exit(1);
      }
  
@@ -373,3 +372,97 @@ diff --git a/dlls/ntdll/unix/virtual.c b/dlls/ntdll/unix/virtual.c
 +#endif
      return teb;
  }
+ 
+@@ -7220,3 +7515,92 @@
+ }
+ 
+ #endif  /* _WIN64 */
++
++#if defined(__APPLE__) && defined(__MACH__) && defined(WINE_IOS)
++/* Host-address probe only. This does not validate guest fixed-address access. */
++static const char *wios_host_vm_stage = "NOT_RUN";
++static NTSTATUS wios_host_vm_release_status;
++
++__attribute__((visibility("default")))
++NTSTATUS wios_ntdll_probe_host_vm(void)
++{
++    TEB *teb = pthread_getspecific( teb_key );
++    MEMORY_BASIC_INFORMATION info;
++    void *base = NULL, *region;
++    SIZE_T size, returned;
++    ULONG old_protect;
++    NTSTATUS status = STATUS_UNSUCCESSFUL;
++
++    wios_host_vm_release_status = STATUS_SUCCESS;
++    wios_host_vm_stage = "TEB_TLS";
++    if (!teb || NtCurrentTeb() != teb || teb->Tib.Self != &teb->Tib || teb->Peb != peb)
++        return status;
++
++    wios_host_vm_stage = "RESERVE";
++    size = 2 * host_page_size;
++    if ((status = NtAllocateVirtualMemory( NtCurrentProcess(), &base, 0, &size,
++                                          MEM_RESERVE, PAGE_READWRITE ))) return status;
++    wios_host_vm_stage = "COMMIT";
++    region = base;
++    size = host_page_size;
++    if ((status = NtAllocateVirtualMemory( NtCurrentProcess(), &region, 0, &size,
++                                          MEM_COMMIT, PAGE_READWRITE ))) goto release;
++    wios_host_vm_stage = "WRITE";
++    ((volatile unsigned char *)base)[0] = 0x5a;
++    ((volatile unsigned char *)base)[host_page_size - 1] = 0xa5;
++
++    wios_host_vm_stage = "PROTECT_RO";
++    region = base;
++    size = host_page_size;
++    if ((status = NtProtectVirtualMemory( NtCurrentProcess(), &region, &size,
++                                         PAGE_READONLY, &old_protect ))) goto release;
++    wios_host_vm_stage = "QUERY";
++    returned = 0;
++    if ((status = NtQueryVirtualMemory( NtCurrentProcess(), base, MemoryBasicInformation,
++                                       &info, sizeof(info), &returned ))) goto release;
++    if (returned != sizeof(info) || info.State != MEM_COMMIT || info.Protect != PAGE_READONLY ||
++        info.AllocationBase != base || info.RegionSize < host_page_size)
++    {
++        status = STATUS_UNSUCCESSFUL;
++        goto release;
++    }
++    wios_host_vm_stage = "READ_RO";
++    if (((volatile unsigned char *)base)[0] != 0x5a ||
++        ((volatile unsigned char *)base)[host_page_size - 1] != 0xa5)
++    {
++        status = STATUS_UNSUCCESSFUL;
++        goto release;
++    }
++    wios_host_vm_stage = "PROTECT_RW";
++    region = base;
++    size = host_page_size;
++    if ((status = NtProtectVirtualMemory( NtCurrentProcess(), &region, &size,
++                                         PAGE_READWRITE, &old_protect ))) goto release;
++    ((volatile unsigned char *)base)[0] = 0xc3;
++    if (((volatile unsigned char *)base)[0] != 0xc3)
++    {
++        status = STATUS_UNSUCCESSFUL;
++        goto release;
++    }
++    wios_host_vm_stage = "RELEASE";
++release:
++    region = base;
++    size = 0;
++    wios_host_vm_release_status = NtFreeVirtualMemory( NtCurrentProcess(), &region, &size, MEM_RELEASE );
++    if (!status)
++    {
++        status = wios_host_vm_release_status;
++        if (!status) wios_host_vm_stage = "PASS";
++    }
++    return status;
++}
++
++__attribute__((visibility("default")))
++const char *wios_ntdll_get_host_vm_probe(void)
++{
++    static char buffer[160];
++    snprintf( buffer, sizeof(buffer), "WINE_HOST_VM=stage=%s release_status=0x%08X guest_fixed_address=NOT_VALIDATED",
++              wios_host_vm_stage, (unsigned int)wios_host_vm_release_status );
++    return buffer;
++}
++#endif

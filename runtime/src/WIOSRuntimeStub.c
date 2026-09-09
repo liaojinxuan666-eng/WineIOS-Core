@@ -576,6 +576,28 @@ static int probe_wine_main_entry(const wios_runtime_config *config)
     runtime_log(config, "WINE_PREFIX_INIT=NOT_RUN");
     runtime_log(config, "WINDOWS_LOADER_INIT=NOT_RUN");
     runtime_log(config, "WINDOWS_ARM64_HELLO=NOT_RUN");
+    {
+        wios_ntdll_get_first_teb_probe_u32_fn probe_host_vm =
+            (wios_ntdll_get_first_teb_probe_u32_fn)dlsym(ntdll_handle, "wios_ntdll_probe_host_vm");
+        wios_ntdll_get_first_teb_probe_string_fn get_host_vm_probe =
+            (wios_ntdll_get_first_teb_probe_string_fn)dlsym(ntdll_handle, "wios_ntdll_get_host_vm_probe");
+        uint32_t status;
+        if (!probe_host_vm || !get_host_vm_probe)
+        {
+            set_error("Wine host VM probe symbols missing; rebuild NTDLL and runtime together");
+            return -15;
+        }
+        runtime_log(config, "WINE_HOST_VM=BEGIN");
+        status = probe_host_vm();
+        runtime_log(config, get_host_vm_probe());
+        if (status)
+        {
+            snprintf(error_buffer, sizeof(error_buffer), "Wine host VM probe failed: 0x%08X", (unsigned int)status);
+            return -15;
+        }
+        runtime_log(config, "WINE_TEB_TLS_IDENTITY=PASS");
+        runtime_log(config, "WINE_NT_VM_ROUNDTRIP=PASS_HOST_PROBE_ONLY");
+    }
     return 0;
 }
 
