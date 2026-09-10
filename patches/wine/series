@@ -8,3 +8,4 @@
 0008-ntdll-diagnose-shared-user-data-conflict.patch
 0009-ntdll-diagnose-fixed-map-result.patch
 0010-ntdll-probe-signal-init-threading.patch
+0011-ntdll-probe-debug-init.patch

@@ -1,0 +1,19 @@
+diff --git a/dlls/ntdll/unix/loader.c b/dlls/ntdll/unix/loader.c
+index 0712102..146c663 100644
+--- a/dlls/ntdll/unix/loader.c
++++ b/dlls/ntdll/unix/loader.c
+@@ -1945,6 +1945,14 @@
+ #endif
+ 
+     dbg_init();
++#if defined(__APPLE__) && defined(__MACH__)
++    if (wios_main_probe_stop_stage == 7)
++    {
++        if (teb) wios_main_probe_result_stage = 7;
++        return;
++    }
++#endif
++
+     startup_info_size = server_init_process();
+     virtual_map_user_shared_data();
+     init_cpu_info();
