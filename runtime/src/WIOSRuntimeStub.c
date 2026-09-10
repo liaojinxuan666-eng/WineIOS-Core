@@ -17,6 +17,7 @@
 #define WIOS_MAIN_PROBE_STAGE_ENVIRONMENT 3u
 #define WIOS_MAIN_PROBE_STAGE_IOS_THREAD_BOUNDARY 4u
 #define WIOS_MAIN_PROBE_STAGE_FIRST_TEB 5u
+#define WIOS_MAIN_PROBE_STAGE_SIGNAL_INIT 6u
 
 static void *ntdll_handle;
 static void *wine_main_entry;
@@ -495,7 +496,7 @@ static int probe_wine_main_entry(const wios_runtime_config *config)
     runtime_log(config, "WINE_FIRST_TEB_PROBE_CONFIG=SHARED_USER_DATA");
 
     wine_main = (wios_wine_main_fn)wine_main_entry;
-    ntdll_set_main_probe_stage(WIOS_MAIN_PROBE_STAGE_FIRST_TEB);
+    ntdll_set_main_probe_stage(WIOS_MAIN_PROBE_STAGE_SIGNAL_INIT);
     runtime_log(config, "WINE_MAIN_CALL=BEGIN");
     wine_main(2, argv);
     ntdll_set_main_probe_stage(0);
@@ -583,21 +584,23 @@ static int probe_wine_main_entry(const wios_runtime_config *config)
         return -13;
     }
 
-    if (get_main_probe_result_stage() != WIOS_MAIN_PROBE_STAGE_FIRST_TEB)
+    if (get_main_probe_result_stage() != WIOS_MAIN_PROBE_STAGE_SIGNAL_INIT)
     {
-        set_error("Wine first-TEB probe returned without a completed TEB");
-        runtime_log(config, "WINE_FIRST_TEB_SETUP=INCOMPLETE");
+        set_error("Wine signal-threading probe returned before signal_init_threading completed");
+        runtime_log(config, "WINE_FIRST_TEB_SETUP=PASS_HOST_PROBE_ONLY");
+        runtime_log(config, "WINE_SIGNAL_INIT_THREADING=INCOMPLETE");
+        runtime_log(config, "WINE_MAIN_THREAD_INIT=FAIL");
         return -13;
     }
     runtime_log(config, "WINE_FIRST_TEB_SETUP=PASS_HOST_PROBE_ONLY");
     runtime_log(config, "WINE_GUEST_FIXED_ADDRESS_COMPATIBILITY=NOT_VALIDATED");
-    runtime_log(config, "WINE_MAIN_THREAD_FIRST_TEB=PARTIAL");
+    runtime_log(config, "WINE_MAIN_THREAD_FIRST_TEB=PASS_HOST_PROBE_ONLY");
     runtime_log(config, "WINE_MAIN_THREAD_INIT=PARTIAL");
-    runtime_log(config, "WINE_MAIN_STOP_AFTER=FIRST_TEB");
+    runtime_log(config, "WINE_MAIN_STOP_AFTER=SIGNAL_INIT_THREADING");
     runtime_log(config, "WINE_TEB_BLOCK_RESERVE=PASS");
     runtime_log(config, "WINE_TEB_BLOCK_COMMIT=PASS");
     runtime_log(config, "WINE_TEB_INIT=PASS");
-    runtime_log(config, "WINE_SIGNAL_INIT_THREADING=NOT_RUN");
+    runtime_log(config, "WINE_SIGNAL_INIT_THREADING=PASS");
     runtime_log(config, "WINE_SERVER_INIT_PROCESS=NOT_RUN");
     runtime_log(config, "WINE_PREFIX_INIT=NOT_RUN");
     runtime_log(config, "WINDOWS_LOADER_INIT=NOT_RUN");

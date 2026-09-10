@@ -1,0 +1,20 @@
+diff --git a/dlls/ntdll/unix/loader.c b/dlls/ntdll/unix/loader.c
+--- a/dlls/ntdll/unix/loader.c
++++ b/dlls/ntdll/unix/loader.c
+@@ -1935,8 +1935,16 @@ static void start_main_thread(void)
+     }
+ #endif
+
+     signal_init_threading();
++#if defined(__APPLE__) && defined(__MACH__)
++    if (wios_main_probe_stop_stage == 6)
++    {
++        if (teb) wios_main_probe_result_stage = 6;
++        return;
++    }
++#endif
++
+     dbg_init();
+     startup_info_size = server_init_process();
+     virtual_map_user_shared_data();
+     init_cpu_info();
