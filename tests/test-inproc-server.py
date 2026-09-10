@@ -78,3 +78,53 @@ int main(void)
         "-I" + str(wine / "include"), str(fault_test), "-o", str(binary)
     ], check=True)
     subprocess.run([str(binary)], check=True, timeout=15)
+
+# Optional: pass a native Wine build directory to exercise actual server objects.
+# iPhoneOS objects cannot run on the CI Mac; this check uses a native server build.
+if len(sys.argv) > 2:
+    native = pathlib.Path(sys.argv[2]).resolve()
+    with tempfile.TemporaryDirectory(prefix='wios-real-server-') as temp:
+        test = pathlib.Path(temp) / 'objects.c'
+        binary = pathlib.Path(temp) / 'objects'
+        test.write_text(r'''
+#include <assert.h>
+#include <pthread.h>
+#include "WIOSWineServerCoreAdapter.c"
+static void *worker(void *unused)
+{
+    int i;
+    for (i = 0; i < 100; i++)
+    {
+        unsigned int status = wios_wine_server_core_probe_objects();
+        if (status) fprintf(stderr, "%s\n", wios_wine_server_core_get_object_probe());
+        assert(!status);
+        assert(wios_wine_server_core_dispatch_close_handle(0) == STATUS_INVALID_HANDLE);
+    }
+    return NULL;
+}
+int main(void)
+{
+    struct thread saved_thread = {0};
+    pthread_t workers[4];
+    unsigned int initial_events = event_type.obj_count, initial_objects = no_type.obj_count;
+    int i;
+    saved_thread.error = 37;
+    current = &saved_thread;
+    global_error = 99;
+    for (i = 0; i < 4; i++) assert(!pthread_create(&workers[i], NULL, worker, NULL));
+    for (i = 0; i < 4; i++) assert(!pthread_join(workers[i], NULL));
+    assert(current == &saved_thread && saved_thread.error == 37 && global_error == 99);
+    assert(event_type.obj_count == initial_events && no_type.obj_count == initial_objects);
+    puts("PASS: 400 real Wine event/handle lifecycles, access checks, concurrent adapter calls, state restoration and object counts");
+    current = NULL;
+    return 0;
+}
+''')
+        objects = sorted(p for p in (native / 'server').glob('*.o') if p.name != 'main.o')
+        if not objects:
+            raise RuntimeError('Native Wine server objects missing')
+        subprocess.run(['cc', '-D__WINESRC__', '-fms-extensions', '-pthread',
+                        '-I' + str(wine / 'include'), '-I' + str(wine / 'server'),
+                        '-I' + str(root / 'runtime/src'), str(test),
+                        *map(str, objects), '-lm', '-o', str(binary)], check=True)
+        subprocess.run([str(binary)], check=True, timeout=40)

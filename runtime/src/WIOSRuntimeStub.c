@@ -234,6 +234,32 @@ static int probe_real_wine_server_core(const wios_runtime_config *config,
     runtime_log(config, "WINE_SERVER_CORE_HANDLER_EXECUTION=PASS");
     runtime_log(config, "WINE_SERVER_CORE_HANDLER_RESULT=PASS");
 
+    {
+        wios_core_u32_fn probe_objects = (wios_core_u32_fn)dlsym(
+            wine_server_core_handle, "wios_wine_server_core_probe_objects");
+        wios_ntdll_get_first_teb_probe_string_fn get_object_probe =
+            (wios_ntdll_get_first_teb_probe_string_fn)dlsym(
+                wine_server_core_handle, "wios_wine_server_core_get_object_probe");
+        uint32_t object_status;
+        if (!probe_objects || !get_object_probe)
+        {
+            set_error("Wine server object probe symbols missing; rebuild server core and runtime together");
+            return -9;
+        }
+        runtime_log(config, "WINE_SERVER_OBJECTS=BEGIN");
+        object_status = probe_objects();
+        runtime_log(config, get_object_probe());
+        if (object_status)
+        {
+            snprintf(error_buffer, sizeof(error_buffer),
+                     "Wine server object lifecycle failed: 0x%08X", (unsigned int)object_status);
+            return -9;
+        }
+        runtime_log(config, "WINE_SERVER_EVENT_LIFECYCLE=PASS");
+        runtime_log(config, "WINE_SERVER_HANDLE_ACCESS_AND_LIFETIME=PASS");
+        runtime_log(config, "WINE_SERVER_PROCESS_CONTEXT=NOT_INITIALIZED");
+    }
+
     if (wios_inproc_server_attach_close_handle(
             (wios_close_handle_dispatch)dispatch_close_handle) != 0)
     {
