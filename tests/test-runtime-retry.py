@@ -32,6 +32,8 @@ static void *dlsym(void *h, const char *name) { (void)h; (void)name; return (voi
 static void dlclose(void *h) { (void)h; }
 static int probe_real_wine_server_core(const wios_runtime_config *c, const char *p)
 { (void)c; (void)p; wine_server_core_handle = (void *)3; return 0; }
+static int probe_native_wine_server_fd_bootstrap(const wios_runtime_config *c)
+{ (void)c; return 0; }
 static int wios_inproc_server_start(wios_log_callback cb, void *ctx)
 { (void)cb; (void)ctx; return 0; }
 static const char *wios_inproc_server_last_error(void) { return "mock server failure"; }

@@ -1,5 +1,3 @@
-#include "config.h"
-
 #include <fcntl.h>
 #include <stdint.h>
 #include <string.h>
