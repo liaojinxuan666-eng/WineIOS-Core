@@ -270,6 +270,15 @@ static int probe_real_wine_server_core(const wios_runtime_config *config,
         return -8;
     }
 
+    {
+        wios_fixed_request_dispatch dispatch = (wios_fixed_request_dispatch)dlsym(
+            wine_server_core_handle, "wios_wine_server_core_dispatch_fixed");
+        if (!dispatch || wios_inproc_server_attach_fixed_dispatch(dispatch))
+        {
+            set_error("Wine fixed protocol dispatcher missing or attachment failed");
+            return -9;
+        }
+    }
     runtime_log(config, "WINE_SERVER_CORE_HANDLER_ATTACH=PASS");
     runtime_log(config, "WINE_SERVER_CORE_DEVICE_LOAD=PASS");
     return 0;
@@ -336,6 +345,59 @@ static int probe_ntdll_server_call_bridge(const wios_runtime_config *config)
         return -2;
     }
 
+    {
+        wios_core_u32_fn begin = (wios_core_u32_fn)dlsym(
+            wine_server_core_handle, "wios_wine_server_core_begin_event_context");
+        void (*end)(void) = (void (*)(void))dlsym(
+            wine_server_core_handle, "wios_wine_server_core_end_event_context");
+        uint32_t handle;
+        int step;
+        if (!begin || !end || !(handle = begin()))
+        {
+            set_error("Wine event protocol context could not be created");
+            return -3;
+        }
+        for (step = 0; step < 7; ++step)
+        {
+            uint32_t expected = step == 6 ? WIOS_STATUS_INVALID_HANDLE : 0;
+            int is_query = step == 0 || step == 2 || step == 4 || step == 6;
+            memset(&request_info, 0, sizeof(request_info));
+            if (is_query)
+            {
+                request_info.u.req.query_event_request.__header.req = REQ_query_event;
+                request_info.u.req.query_event_request.handle = handle;
+            }
+            else if (step == 5)
+            {
+                request_info.u.req.close_handle_request.__header.req = REQ_close_handle;
+                request_info.u.req.close_handle_request.handle = handle;
+            }
+            else
+            {
+                request_info.u.req.event_op_request.__header.req = REQ_event_op;
+                request_info.u.req.event_op_request.handle = handle;
+                request_info.u.req.event_op_request.op = step == 1 ? SET_EVENT : RESET_EVENT;
+            }
+            status = probe_call(&request_info);
+            if (status != expected || request_info.u.reply.reply_header.error != expected ||
+                request_info.u.reply.reply_header.reply_size ||
+                (!status && is_query && (!request_info.u.reply.query_event_reply.manual_reset ||
+                 request_info.u.reply.query_event_reply.state != (step == 2))) ||
+                (!status && !is_query && step != 5 &&
+                 request_info.u.reply.event_op_reply.state != (step == 3)))
+            {
+                char line[160];
+                snprintf(line, sizeof(line), "NTDLL_EVENT_PROTOCOL=FAIL step=%d status=0x%08X", step, status);
+                runtime_log(config, line);
+                end();
+                set_error("Wine event protocol reply/state mismatch");
+                return -4;
+            }
+        }
+        end();
+        runtime_log(config, "NTDLL_EVENT_PROTOCOL=PASS");
+        runtime_log(config, "NTDLL_EVENT_CONTEXT=CLOSED");
+    }
     runtime_log(config, "NTDLL_WINE_SERVER_CALL=PASS");
     runtime_log(config, "NTDLL_INPROC_SERVER_PATH=PASS");
     runtime_log(config, "NTDLL_UNIX_FD_TRANSPORT=BYPASSED_FOR_PROBE");

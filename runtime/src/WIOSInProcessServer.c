@@ -50,6 +50,7 @@ typedef struct
     union generic_reply wine_reply;
 
     wios_close_handle_dispatch close_handle_dispatch;
+    wios_fixed_request_dispatch fixed_dispatch;
 
     wios_log_callback log_callback;
     void *log_context;
@@ -161,6 +162,15 @@ static void handle_wine_protocol_frame(void)
         reply->error = WIOS_STATUS_NOT_IMPLEMENTED;
         reply->reply_size = 0;
         server.response_code = -2;
+        return;
+    }
+
+    if (server.fixed_dispatch && (header->req == REQ_close_handle ||
+        header->req == REQ_event_op || header->req == REQ_query_event))
+    {
+        reply->error = server.fixed_dispatch(&server.wine_request, &server.wine_reply);
+        reply->reply_size = 0;
+        server.response_code = 0;
         return;
     }
 
@@ -420,9 +430,8 @@ static uint32_t server_call_serial(void *req_ptr)
     }
 
     /*
-     * First NTDLL bridge gate is deliberately narrow. close_handle has no
-     * variable request/reply payload, so accepting anything else here could
-     * silently corrupt Wine's protocol state.
+     * Only explicitly supported fixed-size requests may cross this bridge.
+     * Variable request/reply data is rejected below before enqueueing.
      */
     if (req->u.req.request_header.req < 0 ||
         req->u.req.request_header.req >= REQ_NB_REQUESTS)
@@ -431,7 +440,9 @@ static uint32_t server_call_serial(void *req_ptr)
         pthread_mutex_unlock(&server.mutex);
         return fail_request(req, WIOS_STATUS_INVALID_PARAMETER);
     }
-    if (req->u.req.request_header.req != REQ_close_handle)
+    if (req->u.req.request_header.req != REQ_close_handle &&
+        !(server.fixed_dispatch && (req->u.req.request_header.req == REQ_event_op ||
+                                    req->u.req.request_header.req == REQ_query_event)))
     {
         set_error("Wine request is not implemented by the in-process server");
         pthread_mutex_unlock(&server.mutex);
@@ -508,7 +519,7 @@ static int server_probe_wine_protocol_serial(void)
     request->__header.reply_size = 0;
     request->handle = 0;
 
-    handler_attached = server.close_handle_dispatch != NULL;
+    handler_attached = server.close_handle_dispatch != NULL || server.fixed_dispatch != NULL;
     response = submit_request_and_wait(WIOS_REQUEST_WINE_PROTOCOL, NULL);
     reply = server.wine_reply.reply_header;
 
@@ -583,6 +594,7 @@ static void server_stop_serial(void)
         pthread_mutex_lock(&server.mutex);
         server.created = 0;
         server.close_handle_dispatch = NULL;
+        server.fixed_dispatch = NULL;
         pthread_mutex_unlock(&server.mutex);
         log_line("INPROC_SERVER_STOP=PASS");
     }
@@ -595,6 +607,22 @@ const char *wios_inproc_server_last_error(void)
     memcpy(snapshot, server.last_error, sizeof(snapshot));
     pthread_mutex_unlock(&error_mutex);
     return snapshot;
+}
+
+int wios_inproc_server_attach_fixed_dispatch(wios_fixed_request_dispatch dispatch)
+{
+    int result = 0;
+    pthread_mutex_lock(&lifecycle_mutex);
+    pthread_mutex_lock(&server.mutex);
+    if (!dispatch || server.created || server.running)
+    {
+        set_error("fixed dispatcher missing or server already running");
+        result = -1;
+    }
+    else server.fixed_dispatch = dispatch;
+    pthread_mutex_unlock(&server.mutex);
+    pthread_mutex_unlock(&lifecycle_mutex);
+    return result;
 }
 
 int wios_inproc_server_attach_close_handle(wios_close_handle_dispatch dispatch)

@@ -228,3 +228,108 @@ const char *wios_wine_server_core_get_object_probe(void)
     pthread_mutex_unlock(&core_mutex);
     return snapshot;
 }
+
+/* Scoped event transport probe. This is not Windows process startup: no token,
+ * namespace, thread waits or guest process is created by this fixture. */
+static struct process protocol_process;
+static struct thread protocol_thread;
+static int protocol_active;
+
+__attribute__((visibility("default")))
+uint32_t wios_wine_server_core_begin_event_context(void)
+{
+    struct thread *saved;
+    unsigned int saved_error, saved_thread_error;
+    struct event *event = NULL;
+    obj_handle_t handle = 0;
+    pthread_mutex_lock(&core_mutex);
+    if (protocol_active) { pthread_mutex_unlock(&core_mutex); return 0; }
+    saved = current;
+    saved_error = global_error;
+    saved_thread_error = saved ? saved->error : 0;
+    memset(&protocol_process, 0, sizeof(protocol_process));
+    memset(&protocol_thread, 0, sizeof(protocol_thread));
+    protocol_thread.process = &protocol_process;
+    current = &protocol_thread;
+    clear_error();
+    protocol_process.handles = alloc_handle_table(&protocol_process, 0);
+    if (protocol_process.handles)
+    {
+        event = create_event(NULL, NULL, 0, 1, 0, NULL);
+        if (event) handle = alloc_handle(&protocol_process, event, EVENT_ALL_ACCESS, 0);
+    }
+    if (event) release_object(event);
+    if (handle) protocol_active = 1;
+    else close_process_handles(&protocol_process);
+    current = saved;
+    global_error = saved_error;
+    if (saved) saved->error = saved_thread_error;
+    pthread_mutex_unlock(&core_mutex);
+    return handle;
+}
+
+__attribute__((visibility("default")))
+void wios_wine_server_core_end_event_context(void)
+{
+    struct thread *saved;
+    unsigned int saved_error, saved_thread_error;
+    pthread_mutex_lock(&core_mutex);
+    saved = current;
+    saved_error = global_error;
+    saved_thread_error = saved ? saved->error : 0;
+    current = &protocol_thread;
+    if (protocol_active) close_process_handles(&protocol_process);
+    protocol_active = 0;
+    current = saved;
+    global_error = saved_error;
+    if (saved) saved->error = saved_thread_error;
+    pthread_mutex_unlock(&core_mutex);
+}
+
+__attribute__((visibility("default")))
+uint32_t wios_wine_server_core_dispatch_fixed(const void *request_ptr, void *reply_ptr)
+{
+    const union generic_request *request = request_ptr;
+    union generic_reply *reply = reply_ptr;
+    struct thread *saved;
+    struct process empty_process = {0};
+    struct thread empty_thread = {0};
+    unsigned int saved_error, saved_thread_error;
+    uint32_t status;
+    if (!request || !reply) return STATUS_INVALID_PARAMETER;
+    memset(reply, 0, sizeof(*reply));
+    if (request->request_header.request_size || request->request_header.reply_size)
+    { reply->reply_header.error = STATUS_INVALID_PARAMETER; return STATUS_INVALID_PARAMETER; }
+    pthread_mutex_lock(&core_mutex);
+    saved = current;
+    saved_error = global_error;
+    saved_thread_error = saved ? saved->error : 0;
+    empty_thread.process = &empty_process;
+    current = protocol_active ? &protocol_thread : &empty_thread;
+    clear_error();
+    switch (request->request_header.req)
+    {
+    case REQ_close_handle:
+        req_close_handle(&request->close_handle_request, &reply->close_handle_reply);
+        break;
+    case REQ_event_op:
+        if (protocol_active) req_event_op(&request->event_op_request, &reply->event_op_reply);
+        else set_error(STATUS_PORT_DISCONNECTED);
+        break;
+    case REQ_query_event:
+        if (protocol_active) req_query_event(&request->query_event_request, &reply->query_event_reply);
+        else set_error(STATUS_PORT_DISCONNECTED);
+        break;
+    default:
+        set_error(STATUS_NOT_IMPLEMENTED);
+    }
+    status = get_error();
+    if (status) memset(reply, 0, sizeof(*reply));
+    reply->reply_header.error = status;
+    reply->reply_header.reply_size = 0;
+    current = saved;
+    global_error = saved_error;
+    if (saved) saved->error = saved_thread_error;
+    pthread_mutex_unlock(&core_mutex);
+    return status;
+}

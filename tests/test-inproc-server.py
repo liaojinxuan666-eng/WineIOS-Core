@@ -90,6 +90,8 @@ if len(sys.argv) > 2:
 #include <assert.h>
 #include <pthread.h>
 #include "WIOSWineServerCoreAdapter.c"
+#include "WIOSInProcessServer.h"
+#include "wine/server.h"
 static void *worker(void *unused)
 {
     int i;
@@ -102,6 +104,70 @@ static void *worker(void *unused)
     }
     return NULL;
 }
+static void protocol_test(void)
+{
+    struct __server_request_info r;
+    for (int cycle = 0; cycle < 100; ++cycle)
+    {
+        assert(!wios_inproc_server_attach_fixed_dispatch(wios_wine_server_core_dispatch_fixed));
+        assert(!wios_inproc_server_start(NULL, NULL));
+        assert(wios_inproc_server_attach_fixed_dispatch(wios_wine_server_core_dispatch_fixed));
+        obj_handle_t handle = wios_wine_server_core_begin_event_context();
+        assert(handle);
+        assert(!wios_wine_server_core_begin_event_context());
+        for (int step = 0; step < 7; ++step)
+        {
+            memset(&r, 0, sizeof(r));
+            int query = step == 0 || step == 2 || step == 4 || step == 6;
+            if (query)
+            {
+                r.u.req.query_event_request.__header.req = REQ_query_event;
+                r.u.req.query_event_request.handle = handle;
+            }
+            else if (step == 5)
+            {
+                r.u.req.close_handle_request.__header.req = REQ_close_handle;
+                r.u.req.close_handle_request.handle = handle;
+            }
+            else
+            {
+                r.u.req.event_op_request.__header.req = REQ_event_op;
+                r.u.req.event_op_request.handle = handle;
+                r.u.req.event_op_request.op = step == 1 ? SET_EVENT : RESET_EVENT;
+            }
+            unsigned int expected = step == 6 ? STATUS_INVALID_HANDLE : 0;
+            assert(wios_inproc_server_call(&r) == expected);
+            assert(r.u.reply.reply_header.error == expected && !r.u.reply.reply_header.reply_size);
+            if (!expected && query)
+                assert(r.u.reply.query_event_reply.manual_reset && r.u.reply.query_event_reply.state == (step == 2));
+            if (!expected && !query && step != 5)
+                assert(r.u.reply.event_op_reply.state == (step == 3));
+        }
+        wios_wine_server_core_end_event_context();
+        wios_wine_server_core_end_event_context();
+        memset(&r, 0, sizeof(r));
+        r.u.req.query_event_request.__header.req = REQ_query_event;
+        assert(wios_inproc_server_call(&r) == STATUS_PORT_DISCONNECTED);
+        for (int field = 0; field < 3; ++field)
+        {
+            memset(&r, 0, sizeof(r));
+            r.u.req.query_event_request.__header.req = REQ_query_event;
+            if (field == 0) r.data_count = 1;
+            if (field == 1) r.u.req.request_header.request_size = 1;
+            if (field == 2) r.u.req.request_header.reply_size = 1;
+            assert(wios_inproc_server_call(&r) == STATUS_INVALID_PARAMETER);
+        }
+        assert(wios_wine_server_core_begin_event_context());
+        wios_wine_server_core_end_event_context(); /* unclosed handle cleanup */
+        wios_inproc_server_stop();
+        assert(!wios_inproc_server_start(NULL, NULL));
+        memset(&r, 0, sizeof(r));
+        r.u.req.query_event_request.__header.req = REQ_query_event;
+        assert(wios_inproc_server_call(&r) == STATUS_NOT_IMPLEMENTED);
+        wios_inproc_server_stop();
+    }
+    puts("PASS: 100 real event lifecycles through worker, payload validation, previous-state replies, context cleanup and dispatcher detach");
+}
 int main(void)
 {
     struct thread saved_thread = {0};
@@ -113,6 +179,7 @@ int main(void)
     global_error = 99;
     for (i = 0; i < 4; i++) assert(!pthread_create(&workers[i], NULL, worker, NULL));
     for (i = 0; i < 4; i++) assert(!pthread_join(workers[i], NULL));
+    protocol_test();
     assert(current == &saved_thread && saved_thread.error == 37 && global_error == 99);
     assert(event_type.obj_count == initial_events && no_type.obj_count == initial_objects);
     puts("PASS: 400 real Wine event/handle lifecycles, access checks, concurrent adapter calls, state restoration and object counts");
@@ -125,6 +192,7 @@ int main(void)
             raise RuntimeError('Native Wine server objects missing')
         subprocess.run(['cc', '-D__WINESRC__', '-fms-extensions', '-pthread',
                         '-I' + str(wine / 'include'), '-I' + str(wine / 'server'),
-                        '-I' + str(root / 'runtime/src'), str(test),
+                        '-I' + str(root / 'runtime/src'), '-I' + str(root / 'runtime/include'), str(test),
+                        str(root / 'runtime/src/WIOSInProcessServer.c'),
                         *map(str, objects), '-lm', '-o', str(binary)], check=True)
         subprocess.run([str(binary)], check=True, timeout=40)
