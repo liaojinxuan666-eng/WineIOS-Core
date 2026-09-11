@@ -8,6 +8,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <sys/socket.h>
+#include <unistd.h>
 
 #include "wine/server.h"
 
@@ -29,6 +31,8 @@ static int runtime_probe_succeeded;
 
 typedef uint32_t (*wios_core_u32_fn)(void);
 typedef int (*wios_core_bool_fn)(void);
+typedef uint32_t (*wios_native_bootstrap_u32_fn)(void);
+typedef int (*wios_native_bootstrap_client_fn)(int server_fd);
 typedef uint32_t (*wios_core_close_handle_fn)(uint32_t handle);
 typedef void (*wios_ntdll_set_bridge_fn)(uint32_t (*bridge)(void *));
 typedef uint32_t (*wios_ntdll_probe_call_fn)(void *);
@@ -270,18 +274,170 @@ static int probe_real_wine_server_core(const wios_runtime_config *config,
         return -8;
     }
 
-    {
-        wios_fixed_request_dispatch dispatch = (wios_fixed_request_dispatch)dlsym(
-            wine_server_core_handle, "wios_wine_server_core_dispatch_fixed");
-        if (!dispatch || wios_inproc_server_attach_fixed_dispatch(dispatch))
-        {
-            set_error("Wine fixed protocol dispatcher missing or attachment failed");
-            return -9;
-        }
-    }
     runtime_log(config, "WINE_SERVER_CORE_HANDLER_ATTACH=PASS");
     runtime_log(config, "WINE_SERVER_CORE_DEVICE_LOAD=PASS");
     return 0;
+}
+
+static int probe_native_wine_server_fd_bootstrap(const wios_runtime_config *config)
+{
+    const char *dl_error;
+    wios_native_bootstrap_u32_fn abi_version;
+    wios_native_bootstrap_u32_fn stage_fn;
+    wios_native_bootstrap_client_fn bootstrap_client;
+    int sockets[2] = { -1, -1 };
+    int received_fd = -1;
+    int bootstrap_result;
+    uint32_t stage;
+    obj_handle_t protocol = 0;
+    struct iovec iov;
+    struct msghdr message;
+    struct cmsghdr *cmsg;
+    char control[CMSG_SPACE(sizeof(int))];
+    ssize_t received;
+
+    dlerror();
+    abi_version = (wios_native_bootstrap_u32_fn)dlsym(
+        wine_server_core_handle, "wios_wine_server_native_bootstrap_abi_version");
+    stage_fn = (wios_native_bootstrap_u32_fn)dlsym(
+        wine_server_core_handle, "wios_wine_server_native_bootstrap_stage");
+    bootstrap_client = (wios_native_bootstrap_client_fn)dlsym(
+        wine_server_core_handle, "wios_wine_server_native_bootstrap_client");
+
+    if (!abi_version || !stage_fn || !bootstrap_client)
+    {
+        dl_error = dlerror();
+        set_error(dl_error ? dl_error : "native Wine server bootstrap API symbol missing");
+        runtime_log(config, "WINE_SERVER_NATIVE_BOOTSTRAP_API=FAIL");
+        return -1;
+    }
+    runtime_log(config, "WINE_SERVER_NATIVE_BOOTSTRAP_API=PASS");
+
+    if (abi_version() != 1u)
+    {
+        set_error("native Wine server bootstrap ABI mismatch");
+        runtime_log(config, "WINE_SERVER_NATIVE_BOOTSTRAP_ABI=FAIL");
+        return -2;
+    }
+    runtime_log(config, "WINE_SERVER_NATIVE_BOOTSTRAP_ABI=PASS");
+
+    if (socketpair(AF_UNIX, SOCK_STREAM, 0, sockets) != 0)
+    {
+        snprintf(error_buffer, sizeof(error_buffer),
+                 "native Wine server socketpair failed (errno=%d: %s)",
+                 errno, strerror(errno));
+        runtime_log(config, "WINE_SERVER_NATIVE_BOOTSTRAP_SOCKETPAIR=FAIL");
+        return -3;
+    }
+    runtime_log(config, "WINE_SERVER_NATIVE_BOOTSTRAP_SOCKETPAIR=PASS");
+
+    /* bootstrap_client() always takes ownership of the server endpoint. */
+    bootstrap_result = bootstrap_client(sockets[1]);
+    sockets[1] = -1;
+    stage = stage_fn();
+
+    {
+        char line[128];
+        snprintf(line, sizeof(line),
+                 "WINE_SERVER_NATIVE_BOOTSTRAP_STAGE=%u", (unsigned int)stage);
+        runtime_log(config, line);
+    }
+
+    if (stage < 1u)
+    {
+        set_error("Wine server create_process failed during native fd bootstrap");
+        runtime_log(config, "WINE_SERVER_NATIVE_BOOTSTRAP_CREATE_PROCESS=FAIL");
+        goto fail;
+    }
+    runtime_log(config, "WINE_SERVER_NATIVE_BOOTSTRAP_CREATE_PROCESS=PASS");
+
+    if (stage < 2u)
+    {
+        set_error("Wine server create_thread failed during native fd bootstrap");
+        runtime_log(config, "WINE_SERVER_NATIVE_BOOTSTRAP_CREATE_THREAD=FAIL");
+        goto fail;
+    }
+    runtime_log(config, "WINE_SERVER_NATIVE_BOOTSTRAP_CREATE_THREAD=PASS");
+
+    if (bootstrap_result != 0 || stage != 4u)
+    {
+        snprintf(error_buffer, sizeof(error_buffer),
+                 "native Wine server bootstrap cleanup failed (result=%d stage=%u)",
+                 bootstrap_result, (unsigned int)stage);
+        runtime_log(config, "WINE_SERVER_NATIVE_BOOTSTRAP_CLEANUP=FAIL");
+        goto fail;
+    }
+    runtime_log(config, "WINE_SERVER_NATIVE_BOOTSTRAP_CLEANUP=PASS");
+
+    memset(&message, 0, sizeof(message));
+    memset(control, 0, sizeof(control));
+    iov.iov_base = &protocol;
+    iov.iov_len = sizeof(protocol);
+    message.msg_iov = &iov;
+    message.msg_iovlen = 1;
+    message.msg_control = control;
+    message.msg_controllen = sizeof(control);
+
+    errno = 0;
+    received = recvmsg(sockets[0], &message, 0);
+    if (received != (ssize_t)sizeof(protocol) || (message.msg_flags & MSG_CTRUNC))
+    {
+        snprintf(error_buffer, sizeof(error_buffer),
+                 "native Wine server recvmsg failed/partial (bytes=%ld flags=0x%x errno=%d: %s)",
+                 (long)received, message.msg_flags, errno, strerror(errno));
+        runtime_log(config, "WINE_SERVER_NATIVE_BOOTSTRAP_SCM_RIGHTS=FAIL");
+        goto fail;
+    }
+
+    for (cmsg = CMSG_FIRSTHDR(&message); cmsg; cmsg = CMSG_NXTHDR(&message, cmsg))
+    {
+        if (cmsg->cmsg_level == SOL_SOCKET && cmsg->cmsg_type == SCM_RIGHTS &&
+            cmsg->cmsg_len >= CMSG_LEN(sizeof(int)))
+        {
+            memcpy(&received_fd, CMSG_DATA(cmsg), sizeof(received_fd));
+            break;
+        }
+    }
+
+    if (received_fd < 0)
+    {
+        set_error("native Wine server bootstrap did not transfer a request fd");
+        runtime_log(config, "WINE_SERVER_NATIVE_BOOTSTRAP_SCM_RIGHTS=FAIL");
+        goto fail;
+    }
+    runtime_log(config, "WINE_SERVER_NATIVE_BOOTSTRAP_SCM_RIGHTS=PASS");
+
+    {
+        char line[128];
+        snprintf(line, sizeof(line),
+                 "WINE_SERVER_NATIVE_BOOTSTRAP_PROTOCOL_VERSION=%u",
+                 (unsigned int)protocol);
+        runtime_log(config, line);
+    }
+
+    if ((uint32_t)protocol != (uint32_t)SERVER_PROTOCOL_VERSION)
+    {
+        snprintf(error_buffer, sizeof(error_buffer),
+                 "native Wine server protocol mismatch: got %u expected %u",
+                 (unsigned int)protocol, (unsigned int)SERVER_PROTOCOL_VERSION);
+        runtime_log(config, "WINE_SERVER_NATIVE_BOOTSTRAP_PROTOCOL=FAIL");
+        goto fail;
+    }
+
+    runtime_log(config, "WINE_SERVER_NATIVE_BOOTSTRAP_PROTOCOL=PASS");
+    runtime_log(config, "WINE_SERVER_NATIVE_FD_BOOTSTRAP=PASS");
+    runtime_log(config, "WINE_SERVER_NATIVE_TRANSPORT=PASS");
+    runtime_log(config, "WINE_SERVER_INIT_PROCESS=NOT_RUN_NATIVE_GATE");
+
+    close(received_fd);
+    close(sockets[0]);
+    return 0;
+
+fail:
+    if (received_fd >= 0) close(received_fd);
+    if (sockets[0] >= 0) close(sockets[0]);
+    if (sockets[1] >= 0) close(sockets[1]);
+    return -4;
 }
 
 static int probe_ntdll_server_call_bridge(const wios_runtime_config *config)
@@ -345,59 +501,6 @@ static int probe_ntdll_server_call_bridge(const wios_runtime_config *config)
         return -2;
     }
 
-    {
-        wios_core_u32_fn begin = (wios_core_u32_fn)dlsym(
-            wine_server_core_handle, "wios_wine_server_core_begin_event_context");
-        void (*end)(void) = (void (*)(void))dlsym(
-            wine_server_core_handle, "wios_wine_server_core_end_event_context");
-        uint32_t handle;
-        int step;
-        if (!begin || !end || !(handle = begin()))
-        {
-            set_error("Wine event protocol context could not be created");
-            return -3;
-        }
-        for (step = 0; step < 7; ++step)
-        {
-            uint32_t expected = step == 6 ? WIOS_STATUS_INVALID_HANDLE : 0;
-            int is_query = step == 0 || step == 2 || step == 4 || step == 6;
-            memset(&request_info, 0, sizeof(request_info));
-            if (is_query)
-            {
-                request_info.u.req.query_event_request.__header.req = REQ_query_event;
-                request_info.u.req.query_event_request.handle = handle;
-            }
-            else if (step == 5)
-            {
-                request_info.u.req.close_handle_request.__header.req = REQ_close_handle;
-                request_info.u.req.close_handle_request.handle = handle;
-            }
-            else
-            {
-                request_info.u.req.event_op_request.__header.req = REQ_event_op;
-                request_info.u.req.event_op_request.handle = handle;
-                request_info.u.req.event_op_request.op = step == 1 ? SET_EVENT : RESET_EVENT;
-            }
-            status = probe_call(&request_info);
-            if (status != expected || request_info.u.reply.reply_header.error != expected ||
-                request_info.u.reply.reply_header.reply_size ||
-                (!status && is_query && (!request_info.u.reply.query_event_reply.manual_reset ||
-                 request_info.u.reply.query_event_reply.state != (step == 2))) ||
-                (!status && !is_query && step != 5 &&
-                 request_info.u.reply.event_op_reply.state != (step == 3)))
-            {
-                char line[160];
-                snprintf(line, sizeof(line), "NTDLL_EVENT_PROTOCOL=FAIL step=%d status=0x%08X", step, status);
-                runtime_log(config, line);
-                end();
-                set_error("Wine event protocol reply/state mismatch");
-                return -4;
-            }
-        }
-        end();
-        runtime_log(config, "NTDLL_EVENT_PROTOCOL=PASS");
-        runtime_log(config, "NTDLL_EVENT_CONTEXT=CLOSED");
-    }
     runtime_log(config, "NTDLL_WINE_SERVER_CALL=PASS");
     runtime_log(config, "NTDLL_INPROC_SERVER_PATH=PASS");
     runtime_log(config, "NTDLL_UNIX_FD_TRANSPORT=BYPASSED_FOR_PROBE");
@@ -666,7 +769,7 @@ static int probe_wine_main_entry(const wios_runtime_config *config)
     runtime_log(config, "WINE_TEB_INIT=PASS");
     runtime_log(config, "WINE_SIGNAL_INIT_THREADING=PASS");
     runtime_log(config, "WINE_DEBUG_INIT=PASS");
-    runtime_log(config, "WINE_SERVER_INIT_PROCESS=NOT_RUN");
+    runtime_log(config, "WINE_SERVER_INIT_PROCESS=NOT_RUN_NATIVE_GATE");
     runtime_log(config, "WINE_PREFIX_INIT=NOT_RUN");
     runtime_log(config, "WINDOWS_LOADER_INIT=NOT_RUN");
     runtime_log(config, "WINDOWS_ARM64_HELLO=NOT_RUN");
@@ -738,7 +841,7 @@ static int runtime_initialize(const wios_runtime_config *config)
     }
 
     runtime_log(config, "RUNTIME_ABI=PASS");
-    runtime_log(config, "WINE_RUNTIME_REVISION=IOS_TRANSPORT_2");
+    runtime_log(config, "WINE_RUNTIME_REVISION=IOS_TRANSPORT_3_NATIVE_FD_GATE");
     runtime_log(config, "WINE_RUNTIME_ROOT=READY");
 
     if (verify_runtime_layout(config, runtime_root) != 0)
@@ -783,6 +886,9 @@ static int runtime_initialize(const wios_runtime_config *config)
 
     if (probe_real_wine_server_core(config, runtime_root) != 0)
         return -8;
+
+    if (probe_native_wine_server_fd_bootstrap(config) != 0)
+        return -9;
 
     if (wios_inproc_server_start(config->log_callback, config->log_context) != 0)
     {

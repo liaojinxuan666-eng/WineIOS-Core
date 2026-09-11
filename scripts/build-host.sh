@@ -18,9 +18,12 @@ RESOURCE_ROOT="$PROJECT_ROOT/host/WineIOSHost/Resources"
 RUNTIME_SOURCE="$PROJECT_ROOT/runtime/src/WIOSRuntimeStub.c"
 INPROC_SERVER_SOURCE="$PROJECT_ROOT/runtime/src/WIOSInProcessServer.c"
 WINE_SERVER_CORE_ADAPTER_SOURCE="$PROJECT_ROOT/runtime/src/WIOSWineServerCoreAdapter.c"
+WINE_SERVER_NATIVE_BOOTSTRAP_SOURCE="$PROJECT_ROOT/runtime/src/WIOSWineServerNativeBootstrap.c"
 RUNTIME_ROOT="$APP_ROOT/Frameworks/WineRuntime"
 WINE_SERVER_CORE_DYLIB="$RUNTIME_ROOT/libWIOSWineServerCore.dylib"
 LAYOUT_LOG="$BUILD_ROOT/logs/wine-ios-runtime-host-layout.log"
+HOST_MACHO_LOG="$BUILD_ROOT/logs/wine-ios-host-macho.log"
+HOST_PAGEZERO_SIZE=0x10000
 
 NTDLL_SO="$WINE_BUILD/dlls/ntdll/ntdll.so"
 NTDLL_DLL="$WINE_BUILD/dlls/ntdll/aarch64-windows/ntdll.dll"
@@ -46,6 +49,7 @@ require_file "$KERNEL32_DLL"
 require_file "$HELLO_EXE"
 require_file "$INPROC_SERVER_SOURCE"
 require_file "$WINE_SERVER_CORE_ADAPTER_SOURCE"
+require_file "$WINE_SERVER_NATIVE_BOOTSTRAP_SOURCE"
 require_file "$WINE_SOURCE/include/wine/server_protocol.h"
 require_file "$WINE_SOURCE/server/process.h"
 require_file "$WINE_SOURCE/server/thread.h"
@@ -83,6 +87,11 @@ WINE_NATIVE_FLAGS="-D__WINESRC__ -I$WINE_SOURCE/include -fms-extensions"
     -I"$WINE_SOURCE/server" \
     -c "$WINE_SERVER_CORE_ADAPTER_SOURCE" \
     -o "$OBJECT_ROOT/WIOSWineServerCoreAdapter.o"
+"$CLANG" -arch arm64 -isysroot "$SDK_PATH" -miphoneos-version-min="$WIOS_MIN_IOS" \
+    $WINE_NATIVE_FLAGS \
+    -I"$WINE_SOURCE/server" \
+    -c "$WINE_SERVER_NATIVE_BOOTSTRAP_SOURCE" \
+    -o "$OBJECT_ROOT/WIOSWineServerNativeBootstrap.o"
 
 SERVER_OBJECT_LIST="$OBJECT_ROOT/wine-server-core-objects.txt"
 : > "$SERVER_OBJECT_LIST"
@@ -112,9 +121,11 @@ fi
     -Wl,-install_name,@rpath/libWIOSWineServerCore.dylib \
     $SERVER_OBJECTS \
     "$OBJECT_ROOT/WIOSWineServerCoreAdapter.o" \
+    "$OBJECT_ROOT/WIOSWineServerNativeBootstrap.o" \
     -o "$WINE_SERVER_CORE_DYLIB"
 
 "$CLANGXX" -arch arm64 -isysroot "$SDK_PATH" -miphoneos-version-min="$WIOS_MIN_IOS" \
+    -Wl,-pagezero_size,"$HOST_PAGEZERO_SIZE" \
     "$OBJECT_ROOT/main.o" \
     "$OBJECT_ROOT/WIOSAppDelegate.o" \
     "$OBJECT_ROOT/WIOSLog.o" \
@@ -124,6 +135,22 @@ fi
     "$OBJECT_ROOT/WIOSInProcessServer.o" \
     -framework Foundation -framework UIKit \
     -o "$APP_ROOT/WineIOSHost"
+
+mkdir -p "$BUILD_ROOT/logs"
+xcrun otool -l "$APP_ROOT/WineIOSHost" > "$HOST_MACHO_LOG"
+HOST_PAGEZERO_ACTUAL=$(awk '
+    $1 == "segname" && $2 == "__PAGEZERO" { in_pagezero = 1; next }
+    in_pagezero && $1 == "vmsize" { print $2; exit }
+' "$HOST_MACHO_LOG")
+
+case "$HOST_PAGEZERO_ACTUAL" in
+    0x10000|0x0000000000010000)
+        ;;
+    *)
+        echo "Unexpected WineIOSHost __PAGEZERO size: ${HOST_PAGEZERO_ACTUAL:-missing}" >&2
+        exit 1
+        ;;
+esac
 
 sed \
     -e "s/\$(WIOS_BUNDLE_ID)/$WIOS_BUNDLE_ID/g" \
@@ -151,9 +178,10 @@ mkdir -p "$BUILD_ROOT/logs"
     file "$RUNTIME_ROOT/libWIOSWineServerCore.dylib"
     xcrun vtool -show-build "$RUNTIME_ROOT/libWIOSWineServerCore.dylib" || true
     xcrun nm -gU "$RUNTIME_ROOT/libWIOSWineServerCore.dylib" \
-        | grep ' _wios_wine_server_core_' || true
+        | grep -E ' _wios_wine_server_(core|native_bootstrap)_' || true
     file "$RUNTIME_ROOT/dlls/ntdll/ntdll.so"
     file "$RUNTIME_ROOT/hello/hello.exe"
+    echo "HOST_PAGEZERO_SIZE=$HOST_PAGEZERO_ACTUAL"
     echo "WINE_NLS_NORMNFC=BUNDLED"
     echo "WINE_NLS_LOCALE=BUNDLED"
     echo "WINE_NLS_L_INTL=BUNDLED"
